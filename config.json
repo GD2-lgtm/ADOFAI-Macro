@@ -1,0 +1,15 @@
+{
+  "left_keys": [],
+  "right_keys": [],
+  "keys": [],
+  "hotkey": "insert",
+  "press_duration": 19,
+  "technique": {
+    "enabled": true,
+    "style": "内轮",
+    "single_kps": 9.0,
+    "main_hand": "right",
+    "follow_speed": true
+  },
+  "verbose": true
+}
