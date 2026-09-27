@@ -31,7 +31,7 @@ def load_config():
 
 
 def save_config(config, *, left_keys, right_keys, macro_hotkey, press_duration,
-                technique, verbose):
+                technique, verbose, random_offset=0):
     try:
         config.pop("death_key", None)
         config["left_keys"] = left_keys
@@ -39,6 +39,7 @@ def save_config(config, *, left_keys, right_keys, macro_hotkey, press_duration,
         config["keys"] = left_keys + right_keys
         config["hotkey"] = macro_hotkey
         config["press_duration"] = int(press_duration or 40)
+        config["random_offset"] = max(0, int(random_offset or 0))
         config["technique"] = technique
         config["verbose"] = verbose
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:

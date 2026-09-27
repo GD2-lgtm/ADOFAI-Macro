@@ -1,3 +1,7 @@
+import random
+from collections import deque
+
+
 def build_timeline(macro_key_info, custom_keys, press_duration,
                    key_assignments=None, key_hold_ms=None, speed=1.0):
     timeline = []
@@ -31,3 +35,28 @@ def build_timeline(macro_key_info, custom_keys, press_duration,
 
     events.sort(key=lambda x: x[0])
     return events
+
+
+def apply_random_offset(timeline, max_offset_ms, rng=None):
+    """为每次按键加上 [-max, +max] ms 的随机偏移。
+
+    同一次按键的 Down / Up 事件使用相同的偏移量，因此按住时长不变。
+    """
+    max_offset_ms = float(max_offset_ms or 0)
+    if max_offset_ms <= 0 or not timeline:
+        return list(timeline)
+
+    rng = rng or random
+    pending = {}
+    result = []
+    for event_time, key, action in timeline:
+        if action == "D":
+            jitter = rng.uniform(-max_offset_ms, max_offset_ms)
+            pending.setdefault(key, deque()).append(jitter)
+        else:
+            queue = pending.get(key)
+            jitter = queue.popleft() if queue else 0.0
+        result.append((event_time + jitter, key, action))
+
+    result.sort(key=lambda x: x[0])
+    return result

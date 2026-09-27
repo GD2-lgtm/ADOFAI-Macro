@@ -344,6 +344,15 @@ class ADOFAIPlayer(QMainWindow):
         row2.addWidget(QLabel("ms"))
         row2.addWidget(QLabel("(←提前 延后→)"))
 
+        row2.addSpacing(14)
+        row2.addWidget(QLabel("随机偏移: ±"))
+        self.random_offset_edit = QLineEdit(str(self.config.get("random_offset", 0)))
+        self.random_offset_edit.setValidator(self._make_validator(r"\d*"))
+        self.random_offset_edit.setFixedWidth(50)
+        self.random_offset_edit.setToolTip("每个按键随机提前 / 延后的最大毫秒数, 0 为关闭 (每次开始时重新随机)")
+        row2.addWidget(self.random_offset_edit)
+        row2.addWidget(QLabel("ms"))
+
         row2.addStretch(1)
         self.verbose_check = QCheckBox("详细输出")
         self.verbose_check.setChecked(self.verbose)
@@ -760,6 +769,12 @@ class ADOFAIPlayer(QMainWindow):
         except ValueError:
             return default
 
+    def _random_offset_value(self):
+        try:
+            return max(0, int(self.random_offset_edit.text() or 0))
+        except ValueError:
+            return 0
+
     @staticmethod
     def _reverse_key_groups(keys, group_size=4):
         result = []
@@ -776,6 +791,7 @@ class ADOFAIPlayer(QMainWindow):
             "keys": list(self.left_keys) + list(self.right_keys),
             "hotkey": self.macro_hotkey,
             "press_duration": int(self.press_duration_edit.text() or 40),
+            "random_offset": self._random_offset_value(),
             "technique": {
                 "enabled": self.technique_check.isChecked(),
                 "style": self.technique_style_combo.currentText(),
@@ -854,6 +870,12 @@ class ADOFAIPlayer(QMainWindow):
             press_duration = 40
         self.press_duration_edit.setText(str(press_duration))
 
+        try:
+            random_offset = max(0, int(data.get("random_offset", 0)))
+        except (TypeError, ValueError):
+            random_offset = 0
+        self.random_offset_edit.setText(str(random_offset))
+
         tech = data.get("technique")
         if isinstance(tech, dict):
             self.technique_check.setChecked(bool(tech.get("enabled", self.technique_enabled)))
@@ -908,6 +930,7 @@ class ADOFAIPlayer(QMainWindow):
         self.playback.start(
             self.verbose_check.isChecked(),
             on_stopped=self.events.playback_finished.emit,
+            random_offset_ms=self._random_offset_value(),
         )
 
     def stop_play(self, force=False):
@@ -941,6 +964,7 @@ class ADOFAIPlayer(QMainWindow):
             right_keys=self.right_keys,
             macro_hotkey=self.macro_hotkey,
             press_duration=self.press_duration_edit.text(),
+            random_offset=self._random_offset_value(),
             technique={
                 "enabled": self.technique_check.isChecked(),
                 "style": self.technique_style_combo.currentText(),
