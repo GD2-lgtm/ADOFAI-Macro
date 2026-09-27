@@ -4,6 +4,7 @@
   "keys": [],
   "hotkey": "insert",
   "press_duration": 19,
+  "random_offset": 0,
   "technique": {
     "enabled": true,
     "style": "内轮",

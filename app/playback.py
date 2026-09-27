@@ -5,6 +5,7 @@ import keyboard
 
 from .console import PERF_FREQ, get_perf_counter_raw
 from .keys import KeyInjector, resolve_key_codes
+from .timeline import apply_random_offset
 
 
 class PlaybackEngine:
@@ -16,6 +17,7 @@ class PlaybackEngine:
         self._key_codes_cache = {}
         self.is_playing = False
         self.offset_ms = 0.0
+        self.random_offset_ms = 0.0
         self.verbose = True
         self.timeline = []
         self.speed = 1.0
@@ -27,8 +29,9 @@ class PlaybackEngine:
         self.timeline = timeline
         self.speed = speed
 
-    def start(self, verbose, on_stopped=None):
+    def start(self, verbose, on_stopped=None, random_offset_ms=0.0):
         self.verbose = verbose
+        self.random_offset_ms = max(0.0, float(random_offset_ms or 0))
         self.is_playing = True
         self._thread = threading.Thread(
             target=self._run,
@@ -94,8 +97,12 @@ class PlaybackEngine:
             min_sleep_counter = 3.0 * counter_per_ms
             start_counter = get_perf_counter_raw()
 
+            timeline = apply_random_offset(self.timeline, self.random_offset_ms)
+            if self.random_offset_ms > 0:
+                self.log_message(f"随机偏移: ±{self.random_offset_ms:.0f}ms", "system")
+
             groups = []
-            for event_time, key, action in self.timeline:
+            for event_time, key, action in timeline:
                 base = start_counter + (event_time / speed) * counter_per_ms
                 if groups and groups[-1][0] == base:
                     groups[-1][1].append((key, action))
