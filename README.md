@@ -109,7 +109,4 @@ AMacro/
 
 ## 其他
 
-本项目使用了AI进行辅助
-
-- DeepSeek V4.1 flash/V 4.0 pro
-- Kimi K3
+NO
