@@ -1,10 +1,8 @@
 import ctypes
 import multiprocessing
 import threading
-
 from .console import PERF_FREQ, get_perf_counter_raw
 from .playback import PlaybackEngine
-
 
 def _boost_process_timing():
     try:
@@ -23,7 +21,6 @@ def _boost_process_timing():
         )
     except Exception:
         pass
-
     try:
         winmm = ctypes.WinDLL("winmm")
         winmm.timeBeginPeriod(1)
@@ -31,13 +28,11 @@ def _boost_process_timing():
     except Exception:
         return None
 
-
 def _process_log(message, msg_type="system"):
     try:
         print(f"[{msg_type}] {message}", flush=True)
     except Exception:
         pass
-
 
 def _send_status(status, message):
     if status is None:
@@ -46,7 +41,6 @@ def _send_status(status, message):
         status.send(message)
     except Exception:
         pass
-
 
 def _apply_config(engine, timeline, keys, speed, key_output_enabled, verbose):
     engine.timeline = list(timeline or [])
@@ -60,7 +54,6 @@ def _apply_config(engine, timeline, keys, speed, key_output_enabled, verbose):
             engine._key_to_codes(key)
         except Exception:
             pass
-
 
 def _playback_process_main(control, status, timeline=None, keys=None,
                            speed=1.0, verbose=False,
@@ -76,9 +69,7 @@ def _playback_process_main(control, status, timeline=None, keys=None,
         engine.verbose = bool(verbose)
         engine.key_output_enabled = bool(key_output_enabled)
         engine.log_message = _process_log if engine.verbose else (lambda *a, **k: None)
-
     _send_status(status, ("ready",))
-
     try:
         while True:
             try:
@@ -88,7 +79,6 @@ def _playback_process_main(control, status, timeline=None, keys=None,
             if not message:
                 continue
             kind = message[0]
-
             if kind == "configure":
                 _apply_config(
                     engine,
@@ -151,9 +141,7 @@ def _playback_process_main(control, status, timeline=None, keys=None,
             except Exception:
                 pass
 
-
 class RemotePlaybackEngine:
-
     def __init__(self, log_message):
         self.log_message = log_message
         self._keys = []
@@ -269,12 +257,10 @@ class RemotePlaybackEngine:
             actual_delta = float(step) * multiplier
         else:
             actual_delta = 10.0 * multiplier
-
         if absolute:
             self.offset_ms = actual_delta
         else:
             self.offset_ms += actual_delta
-
         self._send_control(("offset", self.offset_ms))
         return self.offset_ms
 
@@ -295,7 +281,6 @@ class RemotePlaybackEngine:
             if self._worker_is_alive():
                 return
             self._cleanup_worker()
-
             control_parent, control_child = self._ctx.Pipe(duplex=True)
             status_parent, status_child = self._ctx.Pipe(duplex=False)
             process = self._ctx.Process(
@@ -303,14 +288,12 @@ class RemotePlaybackEngine:
                 args=(control_child, status_child),
                 daemon=True,
             )
-
             self._process = process
             self._control = control_parent
             self._status = status_parent
             self._configured = False
             self._ready_event.clear()
             self._job_stopped_event.clear()
-
             try:
                 process.start()
             except Exception:
@@ -324,13 +307,11 @@ class RemotePlaybackEngine:
                     except Exception:
                         pass
                 raise
-
             for handle in (control_child, status_child):
                 try:
                     handle.close()
                 except Exception:
                     pass
-
             self._monitor_thread = threading.Thread(
                 target=self._monitor,
                 name="remote-playback-monitor",
@@ -344,7 +325,6 @@ class RemotePlaybackEngine:
             monitor = self._monitor_thread
             self._process = None
             self._monitor_thread = None
-
             if proc is not None:
                 try:
                     if proc.is_alive():
@@ -358,14 +338,12 @@ class RemotePlaybackEngine:
                         proc.join(timeout=0.3)
                 except Exception:
                     pass
-
             self._close_worker_handles()
             if monitor is not None and monitor.is_alive():
                 try:
                     monitor.join(timeout=0.3)
                 except Exception:
                     pass
-
             self._configured = False
             self._ready_event.clear()
             self._job_stopped_event.set()
@@ -429,7 +407,6 @@ class RemotePlaybackEngine:
                         callback()
                     except Exception:
                         pass
-
         self.is_playing = False
         self._job_stopped_event.set()
         self._ready_event.clear()

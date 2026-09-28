@@ -1,15 +1,12 @@
 import ctypes
 import sys
-
 import win32console
 from colorama import just_fix_windows_console
 
 kernel32 = ctypes.windll.kernel32
 _user32 = ctypes.WinDLL('user32', use_last_error=True)
-
 _GetConsoleWindow = kernel32.GetConsoleWindow
 _GetConsoleWindow.restype = ctypes.c_void_p
-
 _SetWindowPos = _user32.SetWindowPos
 _SetWindowPos.argtypes = (
     ctypes.c_void_p, ctypes.c_void_p,
@@ -33,7 +30,6 @@ except Exception:
 
 _winmm = None
 
-
 def _stdout_is_idle():
     try:
         if sys.stdout is not None:
@@ -44,19 +40,16 @@ def _stdout_is_idle():
         pass
     return "idlelib" in sys.modules
 
-
 def get_console_window():
     try:
         return _GetConsoleWindow()
     except Exception:
         return 0
 
-
 def set_always_on_top(enabled):
     hwnd = get_console_window()
     if not hwnd:
         return False
-
     try:
         insert_after = HWND_TOPMOST if enabled else HWND_NOTOPMOST
         result = _SetWindowPos(
@@ -68,11 +61,9 @@ def set_always_on_top(enabled):
     except Exception:
         return False
 
-
 def init():
     global _winmm
     kernel32.SetConsoleOutputCP(65001)
-
     allocated = False
     try:
         win32console.AllocConsole()
@@ -80,26 +71,22 @@ def init():
     except Exception:
         pass
     just_fix_windows_console()
-
     handle = kernel32.GetStdHandle(-11)
     mode = ctypes.c_uint32()
     kernel32.GetConsoleMode(handle, ctypes.byref(mode))
     mode.value |= 0x0004
     kernel32.SetConsoleMode(handle, mode)
-
     if allocated or _stdout_is_idle():
         try:
             sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)
             sys.stderr = sys.stdout
         except Exception:
             pass
-
     try:
         _winmm = ctypes.WinDLL('winmm')
         _winmm.timeBeginPeriod(1)
     except Exception:
         _winmm = None
-
 
 def cleanup():
     global _winmm
@@ -108,14 +95,12 @@ def cleanup():
             _winmm.timeEndPeriod(1)
         except Exception:
             pass
-        _winmm = None
-
+    _winmm = None
 
 def get_perf_counter_ms():
     counter = ctypes.c_int64()
     kernel32.QueryPerformanceCounter(ctypes.byref(counter))
     return counter.value * 1000.0 / PERF_FREQ
-
 
 def get_perf_counter_raw():
     counter = ctypes.c_int64()

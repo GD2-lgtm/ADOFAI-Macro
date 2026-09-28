@@ -1,5 +1,5 @@
 import os
-
+import copy
 from PySide6.QtCore import QEvent, QObject, QRegularExpression, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QRegularExpressionValidator, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
@@ -7,12 +7,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox,
     QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
-
 import keyboard
 from colorama import Fore, Style
-
 from parser import ADOAngle, ADOLevelData
-
 from .. import config as config_module
 from .. import console
 from ..constants import COLOR_MAP, DEFAULT_KEYS
@@ -72,15 +69,11 @@ QStatusBar { background: #e6eaf0; color: #44505e; }
 QTextEdit, QPlainTextEdit { font-family: Consolas, monospace; }
 """
 
-
 RHYTHM_HINT_DIVISIONS = (4, 8, 16, 32)
 DEFAULT_RHYTHM_HINT_SPEED = 100
 DEFAULT_RHYTHM_HINT_DIVISION = 4
-
-
 FALLING_NOTES_LANES = (4, 8)
 DEFAULT_FALLING_NOTES_LANES = 4
-
 
 def _falling_notes_lanes_text(lanes):
     try:
@@ -89,18 +82,14 @@ def _falling_notes_lanes_text(lanes):
         value = DEFAULT_FALLING_NOTES_LANES
     return "8(16)K" if value == 8 else f"{value}K"
 
-
 WINDOW_SIZE_LIMIT = 4000
 
-
 class _UIEvents(QObject):
-
     toggle = Signal()
     offset = Signal(float)
     offset_display = Signal(float)
     playback_finished = Signal()
     debounce_schedule = Signal()
-
 
 def _append_colored(text_edit, line, color=None):
     fmt = QTextCharFormat()
@@ -110,17 +99,15 @@ def _append_colored(text_edit, line, color=None):
     cursor.movePosition(QTextCursor.End)
     cursor.insertText(line + "\n", fmt)
 
-
 class ADOFAIPlayer(QMainWindow):
     def __init__(self, enable_parse_log=False):
         super().__init__()
         self._parse_log_enabled = enable_parse_log
-        self.setWindowTitle("ADOFAI Macro v5.1")
+        self.setWindowTitle("ADOFAI Macro")
         self.setAcceptDrops(True)
 
         self._focus_manager = FocusClearFilter(self)
         self.installEventFilter(self._focus_manager)
-
         self.events = _UIEvents(self)
         self.events.toggle.connect(self.toggle_play)
         self.events.offset.connect(self._apply_offset)
@@ -153,6 +140,11 @@ class ADOFAIPlayer(QMainWindow):
                 self.config.get("suppress_control_keys", True),
             )
         )
+        
+        # 初始化隨機偏移量
+        self.regular_offset_ms = float(self.config.get("regular_offset_ms", 5.0))
+        self.irregular_offset_ms = float(self.config.get("irregular_offset_ms", 10.0))
+
         self.key_config_window = None
         self.other_settings_window = None
         self.rhythm_hint_window = None
@@ -206,7 +198,6 @@ class ADOFAIPlayer(QMainWindow):
         )
         self.window_on_top = False
         self.disable_trigger = False
-
         self._trigger_hook = None
         self._trigger_release_hook = None
         self._trigger_down = False
@@ -215,21 +206,16 @@ class ADOFAIPlayer(QMainWindow):
         self._direction_hook = None
         self._hotkey_configs = []
         self._toggle_debounce = False
-
         self.file_path = ""
         self.timeline = []
-
         self.adofai_angle = None
         self.cumulative_times = []
         self.macro_key_info = []
         self.hold_dict = {}
-
         self.parse_logs = []
-
         self.playback = PlaybackEngine(self.log_message)
         self.playback.key_output_enabled = not self.disable_key_output
         self._sync_custom_keys()
-
         tech = self.config.get("technique")
         self.technique_enabled = tech.get("enabled", False) if isinstance(tech, dict) else bool(tech)
         style_cfg = tech.get("style", 0) if isinstance(tech, dict) else 0
@@ -249,7 +235,6 @@ class ADOFAIPlayer(QMainWindow):
         self.technique_main_hand = tech.get("main_hand", "right") if isinstance(tech, dict) else "right"
         self.technique_follow_speed = tech.get("follow_speed", True) if isinstance(tech, dict) else True
         self.verbose = self.config.get("verbose", True)
-
         self.create_widgets()
         self._register_trigger_key()
         self.update_buttons_state()
@@ -258,7 +243,6 @@ class ADOFAIPlayer(QMainWindow):
             self.open_rhythm_hint()
         if self.falling_notes_enabled:
             self.open_falling_notes()
-
 
     def _update_log_count(self):
         if self._parse_log_enabled and hasattr(self, "lbl_log_count"):
@@ -294,13 +278,11 @@ class ADOFAIPlayer(QMainWindow):
         win.setWindowTitle("谱面解析日志")
         win.resize(900, 700)
         self._apply_window_flag(win, self.window_on_top)
-
         layout = QVBoxLayout(win)
         text = QTextEdit()
         text.setReadOnly(True)
         text.setFont(QFont("Consolas", 9))
         layout.addWidget(text)
-
         btn_layout = QHBoxLayout()
         btn_save = QPushButton("保存到文件")
         btn_save.clicked.connect(self.save_parse_logs)
@@ -310,7 +292,6 @@ class ADOFAIPlayer(QMainWindow):
         btn_layout.addStretch(1)
         btn_layout.addWidget(btn_close)
         layout.addLayout(btn_layout)
-
         for line in self.parse_logs:
             if line.startswith("[ERROR]") or line.startswith("[WARNING]"):
                 color = "#d32f2f"
@@ -325,13 +306,10 @@ class ADOFAIPlayer(QMainWindow):
             else:
                 color = None
             _append_colored(text, line, color)
-
         win.exec()
-
 
     def _create_menu_bar(self):
         menubar = self.menuBar()
-
         file_menu = menubar.addMenu("文件(&F)")
         act_open = QAction("加载谱面...", self)
         act_open.setShortcut("Ctrl+O")
@@ -349,12 +327,10 @@ class ADOFAIPlayer(QMainWindow):
         act_quit.setShortcut("Ctrl+Q")
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
-
         act_other_settings = QAction("其他设置", self)
         act_other_settings.setToolTip("打开其他设置窗口")
         act_other_settings.triggered.connect(self.open_other_settings)
         menubar.addAction(act_other_settings)
-
         self.act_window_on_top = QAction("窗口置顶：关", self)
         self.act_window_on_top.setCheckable(True)
         self.act_window_on_top.setToolTip("切换程序所有窗口的窗口置顶状态")
@@ -417,9 +393,7 @@ class ADOFAIPlayer(QMainWindow):
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(12, 8, 12, 8)
         main_layout.setSpacing(8)
-
         self._create_menu_bar()
-
         file_box = QGroupBox()
         file_layout = QHBoxLayout(file_box)
         btn_select = QPushButton("加载谱面")
@@ -436,7 +410,6 @@ class ADOFAIPlayer(QMainWindow):
         btn_key_config.clicked.connect(self.open_key_config)
         file_layout.addWidget(btn_key_config)
         main_layout.addWidget(file_box)
-
         self.output_keys_box = self._build_output_keys_box()
         self.trigger_box = self._build_trigger_box()
         self.delay_box = self._build_delay_box()
@@ -444,11 +417,9 @@ class ADOFAIPlayer(QMainWindow):
         self.macro_end_box = self._build_macro_end_box()
         self.rhythm_hint_box = self._build_rhythm_hint_box()
         self.falling_notes_box = self._build_falling_notes_box()
-
         control_box = QGroupBox("播放控制")
         control_layout = QVBoxLayout(control_box)
         control_layout.setSpacing(6)
-
         row1 = QHBoxLayout()
         row1.setSpacing(8)
         row1.addWidget(QLabel("倍速:"))
@@ -461,7 +432,6 @@ class ADOFAIPlayer(QMainWindow):
         row1.addWidget(QLabel("x"))
         row1.addStretch(1)
         control_layout.addLayout(row1)
-
         row2 = QHBoxLayout()
         row2.setSpacing(8)
         row2.addWidget(QLabel("按键时长:"))
@@ -472,7 +442,6 @@ class ADOFAIPlayer(QMainWindow):
         self.press_duration_edit.editingFinished.connect(self._on_speed_changed)
         row2.addWidget(self.press_duration_edit)
         row2.addWidget(QLabel("ms"))
-
         row2.addSpacing(14)
         row2.addWidget(QLabel("偏移:"))
         self.offset_label = QLabel("+0")
@@ -481,16 +450,38 @@ class ADOFAIPlayer(QMainWindow):
         row2.addWidget(self.offset_label)
         row2.addWidget(QLabel("ms"))
         row2.addWidget(QLabel("(←提前 延后→)"))
-
         row2.addStretch(1)
         self.verbose_check = QCheckBox("详细输出")
         self.verbose_check.setChecked(self.verbose)
         self.verbose_check.setToolTip("打印每个按键的按下 / 释放时间")
         row2.addWidget(self.verbose_check)
         control_layout.addLayout(row2)
-
+        
+        # ================= 隨機偏移 UI =================
+        row3 = QHBoxLayout()
+        row3.setSpacing(8)
+        row3.addWidget(QLabel("正常偏移 ±"))
+        self.regular_offset_edit = QLineEdit(str(self.regular_offset_ms))
+        self.regular_offset_edit.setValidator(self._make_validator(r"\d*\.?\d*"))
+        self.regular_offset_edit.setFixedWidth(50)
+        self.regular_offset_edit.setToolTip("正常角度(如90, 180度)及雙押/三連音的随机偏移量(ms)")
+        self.regular_offset_edit.editingFinished.connect(self._on_offset_changed)
+        row3.addWidget(self.regular_offset_edit)
+        row3.addWidget(QLabel("ms"))
+        row3.addSpacing(14)
+        row3.addWidget(QLabel("不规则偏移 ±"))
+        self.irregular_offset_edit = QLineEdit(str(self.irregular_offset_ms))
+        self.irregular_offset_edit.setValidator(self._make_validator(r"\d*\.?\d*"))
+        self.irregular_offset_edit.setFixedWidth(50)
+        self.irregular_offset_edit.setToolTip("不规则角度(如45, 58度)的随机偏移量(ms)")
+        self.irregular_offset_edit.editingFinished.connect(self._on_offset_changed)
+        row3.addWidget(self.irregular_offset_edit)
+        row3.addWidget(QLabel("ms"))
+        row3.addStretch(1)
+        control_layout.addLayout(row3)
+        # =====================================================
+        
         main_layout.addWidget(control_box)
-
         technique_box = QGroupBox("手法模拟")
         technique_layout = QHBoxLayout(technique_box)
         technique_layout.setSpacing(10)
@@ -532,7 +523,6 @@ class ADOFAIPlayer(QMainWindow):
         technique_layout.addWidget(self.technique_follow_speed_check)
         technique_layout.addStretch(1)
         main_layout.addWidget(technique_box)
-
         if self._parse_log_enabled:
             log_box = QGroupBox("谱面解析日志")
             log_layout = QHBoxLayout(log_box)
@@ -547,12 +537,10 @@ class ADOFAIPlayer(QMainWindow):
             log_layout.addWidget(self.lbl_log_count)
             log_layout.addStretch(1)
             main_layout.addWidget(log_box)
-
         status = self.statusBar()
         self.status_label = QLabel("就绪")
         self.status_label.setStyleSheet("color: gray;")
         status.addWidget(self.status_label)
-
         self.refresh_key_list()
         self._update_window_on_top_action()
 
@@ -589,7 +577,6 @@ class ADOFAIPlayer(QMainWindow):
         box = QGroupBox("延迟调整")
         layout = QVBoxLayout(box)
         layout.setSpacing(6)
-
         row = QHBoxLayout()
         row.setSpacing(8)
         row.addWidget(QLabel("提前:"))
@@ -600,7 +587,6 @@ class ADOFAIPlayer(QMainWindow):
         btn_left = QPushButton("绑定")
         btn_left.clicked.connect(lambda: self.bind_key("offset_left"))
         row.addWidget(btn_left)
-
         row.addSpacing(24)
         row.addWidget(QLabel("延后:"))
         self.lbl_offset_right = QLabel(self.offset_right_key)
@@ -612,7 +598,6 @@ class ADOFAIPlayer(QMainWindow):
         row.addWidget(btn_right)
         row.addStretch(1)
         layout.addLayout(row)
-
         self.realtime_offset_check = QCheckBox("实时延迟调节")
         self.realtime_offset_check.setChecked(self.realtime_offset_enabled)
         self.realtime_offset_check.setToolTip("开启后可在播放时用「提前/延后」键实时调整延迟")
@@ -658,7 +643,6 @@ class ADOFAIPlayer(QMainWindow):
         box = QGroupBox("按键输出")
         layout = QHBoxLayout(box)
         layout.setSpacing(8)
-
         self.disable_key_output_check = QCheckBox("禁用 Macro 按键输出")
         self.disable_key_output_check.setChecked(self.disable_key_output)
         self.disable_key_output_check.setToolTip(
@@ -669,7 +653,6 @@ class ADOFAIPlayer(QMainWindow):
             self._on_disable_key_output_toggled
         )
         layout.addWidget(self.disable_key_output_check)
-
         layout.addSpacing(10)
         self.suppress_bound_keys_check = QCheckBox("屏蔽已绑定按键输入")
         self.suppress_bound_keys_check.setChecked(self.suppress_bound_keys)
@@ -682,7 +665,6 @@ class ADOFAIPlayer(QMainWindow):
             self._on_suppress_bound_keys_toggled
         )
         layout.addWidget(self.suppress_bound_keys_check)
-
         layout.addStretch(1)
         return box
 
@@ -753,7 +735,6 @@ class ADOFAIPlayer(QMainWindow):
         )
         self.rhythm_hint_check.toggled.connect(self._on_rhythm_hint_toggled)
         layout.addWidget(self.rhythm_hint_check)
-
         layout.addSpacing(10)
         layout.addWidget(QLabel("流速:"))
         self.rhythm_hint_speed_edit = QLineEdit(str(int(self.rhythm_hint_speed)))
@@ -766,7 +747,6 @@ class ADOFAIPlayer(QMainWindow):
             self._on_rhythm_hint_options_changed
         )
         layout.addWidget(self.rhythm_hint_speed_edit)
-
         layout.addSpacing(10)
         layout.addWidget(QLabel("切分:"))
         self.rhythm_hint_division_combo = QComboBox()
@@ -783,7 +763,6 @@ class ADOFAIPlayer(QMainWindow):
             self._on_rhythm_hint_options_changed
         )
         layout.addWidget(self.rhythm_hint_division_combo)
-
         self.rhythm_hint_hit_effect_check = QCheckBox("判定特效")
         self.rhythm_hint_hit_effect_check.setChecked(self.rhythm_hint_hit_effect)
         self.rhythm_hint_hit_effect_check.setToolTip(
@@ -793,7 +772,6 @@ class ADOFAIPlayer(QMainWindow):
             self._on_rhythm_hint_options_changed
         )
         layout.addWidget(self.rhythm_hint_hit_effect_check)
-
         self.rhythm_hint_multi_fix_check = QCheckBox("多押提示")
         self.rhythm_hint_multi_fix_check.setChecked(self.rhythm_hint_multi_fix)
         self.rhythm_hint_multi_fix_check.setToolTip(
@@ -804,21 +782,18 @@ class ADOFAIPlayer(QMainWindow):
             self._on_rhythm_hint_options_changed
         )
         layout.addWidget(self.rhythm_hint_multi_fix_check)
-
         self.rhythm_hint_default_size_btn = QPushButton("默认大小")
         self.rhythm_hint_default_size_btn.setToolTip(
             "把节奏提示窗口恢复到默认大小(900×150)"
         )
         self.rhythm_hint_default_size_btn.clicked.connect(self.reset_rhythm_hint_size)
         layout.addWidget(self.rhythm_hint_default_size_btn)
-
         self.rhythm_hint_render_btn = QPushButton("重新渲染")
         self.rhythm_hint_render_btn.setToolTip(
             "重新渲染节奏提示窗口(不需要按触发键，窗口回到谱面起点)"
         )
         self.rhythm_hint_render_btn.clicked.connect(self.re_render_rhythm_hint)
         layout.addWidget(self.rhythm_hint_render_btn)
-
         layout.addStretch(1)
         return box
 
@@ -834,7 +809,6 @@ class ADOFAIPlayer(QMainWindow):
         )
         self.falling_notes_check.toggled.connect(self._on_falling_notes_toggled)
         layout.addWidget(self.falling_notes_check)
-
         layout.addSpacing(10)
         layout.addWidget(QLabel("流速:"))
         self.falling_notes_speed_edit = QLineEdit(str(int(self.falling_notes_speed)))
@@ -847,7 +821,6 @@ class ADOFAIPlayer(QMainWindow):
             self._on_falling_notes_options_changed
         )
         layout.addWidget(self.falling_notes_speed_edit)
-
         layout.addSpacing(10)
         layout.addWidget(QLabel("切分:"))
         self.falling_notes_division_combo = QComboBox()
@@ -864,7 +837,6 @@ class ADOFAIPlayer(QMainWindow):
             self._on_falling_notes_options_changed
         )
         layout.addWidget(self.falling_notes_division_combo)
-
         layout.addSpacing(10)
         layout.addWidget(QLabel("轨道数:"))
         self.falling_notes_lanes_combo = QComboBox()
@@ -883,7 +855,6 @@ class ADOFAIPlayer(QMainWindow):
             self._on_falling_notes_options_changed
         )
         layout.addWidget(self.falling_notes_lanes_combo)
-
         self.falling_notes_hit_effect_check = QCheckBox("判定特效")
         self.falling_notes_hit_effect_check.setChecked(
             self.falling_notes_hit_effect
@@ -895,7 +866,6 @@ class ADOFAIPlayer(QMainWindow):
             self._on_falling_notes_options_changed
         )
         layout.addWidget(self.falling_notes_hit_effect_check)
-
         self.falling_notes_multi_fix_check = QCheckBox("多押提示")
         self.falling_notes_multi_fix_check.setChecked(self.falling_notes_multi_fix)
         self.falling_notes_multi_fix_check.setToolTip(
@@ -907,21 +877,18 @@ class ADOFAIPlayer(QMainWindow):
             self._on_falling_notes_options_changed
         )
         layout.addWidget(self.falling_notes_multi_fix_check)
-
         self.falling_notes_default_size_btn = QPushButton("默认大小")
         self.falling_notes_default_size_btn.setToolTip(
             "把下落式窗口恢复到默认大小(380×820)"
         )
         self.falling_notes_default_size_btn.clicked.connect(self.reset_falling_notes_size)
         layout.addWidget(self.falling_notes_default_size_btn)
-
         self.falling_notes_render_btn = QPushButton("重新渲染")
         self.falling_notes_render_btn.setToolTip(
             "重新渲染下落式窗口(不需要按触发键，窗口回到谱面起点)"
         )
         self.falling_notes_render_btn.clicked.connect(self.re_render_falling_notes)
         layout.addWidget(self.falling_notes_render_btn)
-
         layout.addStretch(1)
         return box
 
@@ -963,7 +930,6 @@ class ADOFAIPlayer(QMainWindow):
 
     @staticmethod
     def _migrate_rhythm_hint_speed(value):
-
         if isinstance(value, bool):
             return DEFAULT_RHYTHM_HINT_SPEED
         if isinstance(value, float):
@@ -1083,9 +1049,6 @@ class ADOFAIPlayer(QMainWindow):
         )
 
     def _rhythm_hint_multi_angles(self, notes):
-
-
-
         angle = self.adofai_angle
         turns = getattr(angle, "originRotateAngleList", None)
         if not turns:
@@ -1094,9 +1057,7 @@ class ADOFAIPlayer(QMainWindow):
             )
         if not turns:
             return None
-
         first_real = self._first_real_floor(getattr(angle, "angleData", None))
-
         result = []
         found = False
         for note in notes:
@@ -1133,7 +1094,6 @@ class ADOFAIPlayer(QMainWindow):
 
     @staticmethod
     def _travel_from_angle_data(angle_data):
-
         if not angle_data:
             return None
         result = [None] * len(angle_data)
@@ -1144,7 +1104,6 @@ class ADOFAIPlayer(QMainWindow):
                 continue
             if current == 999.0:
                 continue
-
             prev_index = index - 1
             offset = 1
             previous = None
@@ -1410,7 +1369,6 @@ class ADOFAIPlayer(QMainWindow):
         )
 
     def _selected_falling_notes(self):
-
         if not self.timeline:
             return []
         per_hand = max(1, self.falling_notes_lanes // 2)
@@ -1441,7 +1399,6 @@ class ADOFAIPlayer(QMainWindow):
         return notes
 
     def _falling_lane_of(self, key, per_hand):
-
         per_hand = max(1, int(per_hand))
         if key in self.left_keys:
             return per_hand - 1 - (self.left_keys.index(key) % per_hand)
@@ -1450,7 +1407,6 @@ class ADOFAIPlayer(QMainWindow):
         return 0
 
     def _falling_key_row_of(self, key, per_hand):
-
         per_hand = max(1, int(per_hand))
         if key in self.left_keys:
             index = self.left_keys.index(key)
@@ -1471,25 +1427,21 @@ class ADOFAIPlayer(QMainWindow):
         self.status_label.setText(text)
         self.status_label.setStyleSheet(f"color: {color};")
 
-
     def _create_key_list(self, parent, title, key_type, listbox_attr,
                          del_attr, up_attr, down_attr):
         panel = QWidget()
         vlayout = QVBoxLayout(panel)
         vlayout.setContentsMargins(0, 0, 0, 0)
         vlayout.setSpacing(6)
-
         header = QLabel(title)
         header.setStyleSheet("color: #33404f; font-weight: 600;")
         vlayout.addWidget(header)
-
         listbox = QListWidget()
         listbox.setFixedHeight(130)
         listbox.setToolTip("双击列表项可直接修改该按键")
         listbox.itemDoubleClicked.connect(lambda item: self._rebind_key(listbox, key_type))
         vlayout.addWidget(listbox)
         setattr(self, listbox_attr, listbox)
-
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
         add_btn = QPushButton("＋ 添加")
@@ -1505,9 +1457,7 @@ class ADOFAIPlayer(QMainWindow):
         for btn in (add_btn, del_btn, up_btn, down_btn):
             btn_row.addWidget(btn, 1)
         vlayout.addLayout(btn_row)
-
         parent.layout().addWidget(panel, 1)
-
         setattr(self, del_attr, del_btn)
         setattr(self, up_attr, up_btn)
         setattr(self, down_attr, down_btn)
@@ -1549,7 +1499,6 @@ class ADOFAIPlayer(QMainWindow):
         except KeyError:
             self.disable_trigger = False
             return
-
         parent = self._ui_parent()
         win = BindWindow(parent, title)
         self._apply_window_flag(win, self.window_on_top)
@@ -1557,10 +1506,8 @@ class ADOFAIPlayer(QMainWindow):
             accepted = win.exec() == QDialog.Accepted
         finally:
             self.disable_trigger = False
-
         if not (accepted and win.key):
             return
-
         key = win.key
         output_keys = self.left_keys + self.right_keys
         if key_type == "trigger":
@@ -1575,7 +1522,6 @@ class ADOFAIPlayer(QMainWindow):
             self.lbl_hotkey.setText(key)
             self._register_trigger_key()
             return
-
         if key_type in ("offset_left", "offset_right"):
             other_key = self.offset_right_key if key_type == "offset_left" else self.offset_left_key
             if key == self.macro_hotkey:
@@ -1593,7 +1539,6 @@ class ADOFAIPlayer(QMainWindow):
             getattr(self, self._offset_label_attr(key_type)).setText(key)
             self._refresh_direction_keys()
             return
-
         if key == self.macro_hotkey:
             QMessageBox.warning(parent, "冲突", "输出键不能与触发键相同！")
             return
@@ -1689,7 +1634,6 @@ class ADOFAIPlayer(QMainWindow):
                 except Exception:
                     pass
                 setattr(self, attr, None)
-
         self._trigger_down = False
         self._trigger_latch_enabled = False
         try:
@@ -1826,7 +1770,6 @@ class ADOFAIPlayer(QMainWindow):
         offset = self.playback.adjust_offset(delta)
         self._update_offset_display(offset)
 
-
     def select_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "选择谱面文件", "", "ADOFAI文件 (*.adofai)")
         if file_path:
@@ -1879,26 +1822,19 @@ class ADOFAIPlayer(QMainWindow):
         try:
             self.parse_logs = []
             self._parse_logger("MAIN", f"开始处理文件: {self.file_path}")
-
             ald = ADOLevelData.new(self.file_path)
             ald.set_logger(self._parse_logger)
             ald.decode()
-
             self.adofai_angle = ADOAngle(ald)
             self.adofai_angle.set_logger(self._parse_logger)
-
             self.cumulative_times = self.adofai_angle.getMacroCumulativeTimes()
             self.macro_key_info = self.adofai_angle.getMacroKeyInfo()
             self.hold_dict = self.adofai_angle.getHoldDict()
-
             self.generate_timeline()
-
             self.log_message(f"文件解析完成: {len(self.timeline)//2} 个按键事件", "system")
             self._set_status(f"已加载: {os.path.basename(self.file_path)}", "green")
-
             self._update_log_count()
             self._parse_logger("MAIN", f"处理完成，共生成 {len(self.parse_logs)} 条日志")
-
         except Exception as e:
             self.log_message(f"解析错误: {str(e)}", "error")
             self._set_status("解析失败", "red")
@@ -1907,7 +1843,6 @@ class ADOFAIPlayer(QMainWindow):
             self.parse_logs.append(f"[ERROR] {str(e)}")
             self.parse_logs.append(traceback.format_exc())
             self._update_log_count()
-
         speed = float(self.speed_edit.text() or 1.0)
         self.playback.preload_timeline(self.timeline, speed)
         self._refresh_hint_windows()
@@ -1921,13 +1856,28 @@ class ADOFAIPlayer(QMainWindow):
         self.playback.preload_timeline(self.timeline, speed)
         self._refresh_falling_notes()
 
+    def _on_offset_changed(self):
+        try:
+            self.regular_offset_ms = float(self.regular_offset_edit.text())
+        except ValueError:
+            self.regular_offset_ms = 5.0
+        try:
+            self.irregular_offset_ms = float(self.irregular_offset_edit.text())
+        except ValueError:
+            self.irregular_offset_ms = 10.0
+        if not self.file_path or self.playback.is_playing:
+            return
+        if self.macro_key_info:
+            self.generate_timeline()
+        speed = self._bpm_value(self.speed_edit, 1.0)
+        self.playback.preload_timeline(self.timeline, speed)
+
     def _selected_key_limits(self, infos):
         if not infos or self.adofai_angle is None:
             return None
         events = self.adofai_angle.getKeyLimiterList()
         if not events:
             return None
-
         limits = []
         event_idx = 0
         current = None
@@ -1952,13 +1902,10 @@ class ADOFAIPlayer(QMainWindow):
         main_hand = self._main_hand()
         main_list = right if main_hand == "right" else left
         sub_list = left if main_hand == "right" else right
-
         main_count = min(len(main_list), (limit + 1) // 2)
         sub_count = min(len(sub_list), limit // 2)
-
         left_slice = left[:sub_count] if main_hand == "right" else left[:main_count]
         right_slice = right[:main_count] if main_hand == "right" else right[:sub_count]
-
         allowed = []
         for i in range(max(len(left_slice), len(right_slice))):
             if i < len(left_slice):
@@ -1987,19 +1934,15 @@ class ADOFAIPlayer(QMainWindow):
         key_groups = None
         key_list = self.custom_keys
         speed = self._bpm_value(self.speed_edit, 1.0)
-
         if selected_macro_key_info and self.technique_check.isChecked():
             press_times = [k['press_time'] for k in selected_macro_key_info]
             left_keys = self._reverse_key_groups(self.left_keys, 4)
             right_keys = list(self.right_keys)
             main_hand = "right" if self.main_hand_combo.currentText() == "右手" else "left"
-
             single_kps = self._bpm_value(self.single_kps_edit, 6.5)
-
             follow_speed = self.technique_follow_speed_check.isChecked() and speed != 1.0
             if follow_speed:
                 press_times = [t / speed for t in press_times]
-
             simulator = AdvancedTechnique(
                 left_keys, right_keys,
                 single_finger_bpm=single_kps * 60.0,
@@ -2012,6 +1955,22 @@ class ADOFAIPlayer(QMainWindow):
             )
             if follow_speed:
                 key_hold_ms = [h * speed for h in key_hold_ms]
+                
+        # ================= 核心修改：獲取角度並標記雙押 =================
+        angles = None
+        if self.adofai_angle is not None:
+            angles = self.adofai_angle.getMacroTurnAngles(selected_macro_key_info)
+            
+        # 自動標記雙押和三連音 (multi_count > 1)
+        if angles and selected_macro_key_info:
+            notes_temp = [copy.deepcopy(n) for n in selected_macro_key_info]
+            current_bpm = self._chart_bpm()
+            limit = track_angle_limit(current_bpm) if current_bpm > 0 else None
+            annotate_multi_press(notes_temp, angles=angles, limit=limit)
+            # 將標記結果寫回原始列表，供 timeline.py 使用
+            for i in range(len(selected_macro_key_info)):
+                selected_macro_key_info[i]['multi_count'] = notes_temp[i].get('multi_count', 1)
+        # ==========================================================
 
         self.timeline = build_timeline(
             selected_macro_key_info,
@@ -2024,6 +1983,9 @@ class ADOFAIPlayer(QMainWindow):
             left_keys=self.left_keys,
             right_keys=self.right_keys,
             key_groups=key_groups,
+            angles=angles,
+            regular_offset_ms=self.regular_offset_ms,
+            irregular_offset_ms=self.irregular_offset_ms,
         )
 
     @staticmethod
@@ -2041,7 +2003,6 @@ class ADOFAIPlayer(QMainWindow):
             group = keys[i:i + group_size]
             result.extend(reversed(group))
         return result
-
 
     def _collect_config(self):
         self._remember_hint_window_sizes()
@@ -2079,6 +2040,8 @@ class ADOFAIPlayer(QMainWindow):
             "rhythm_hint_width": int(self.rhythm_hint_width),
             "falling_notes_width": int(self.falling_notes_width),
             "falling_notes_height": int(self.falling_notes_height),
+            "regular_offset_ms": self.regular_offset_ms,
+            "irregular_offset_ms": self.irregular_offset_ms,
         }
 
     def export_config_file(self):
@@ -2109,7 +2072,6 @@ class ADOFAIPlayer(QMainWindow):
         if data is None:
             QMessageBox.critical(self, "导入失败", f"无法读取配置文件:\n{file_path}")
             return
-
         self.stop_play()
         self._apply_config(data)
         self.log_message(f"配置已导入: {file_path}", "system")
@@ -2127,9 +2089,7 @@ class ADOFAIPlayer(QMainWindow):
         self._sync_custom_keys()
         self.refresh_key_list()
         self.update_buttons_state()
-
         output_lower = [k.lower() for k in self.left_keys + self.right_keys]
-
         offset_left = data.get("offset_left_key")
         if isinstance(offset_left, str) and offset_left:
             if (offset_left.lower() != self.macro_hotkey.lower()
@@ -2141,7 +2101,6 @@ class ADOFAIPlayer(QMainWindow):
                     f"导入配置: 提前键 '{offset_left}' 存在冲突,保留当前值 '{self.offset_left_key}'",
                     "warning",
                 )
-
         offset_right = data.get("offset_right_key")
         if isinstance(offset_right, str) and offset_right:
             if (offset_right.lower() != self.macro_hotkey.lower()
@@ -2153,7 +2112,6 @@ class ADOFAIPlayer(QMainWindow):
                     f"导入配置: 延后键 '{offset_right}' 存在冲突,保留当前值 '{self.offset_right_key}'",
                     "warning",
                 )
-
         hotkey = data.get("hotkey")
         if isinstance(hotkey, str) and hotkey:
             conflict = (hotkey.lower() in output_lower
@@ -2169,7 +2127,6 @@ class ADOFAIPlayer(QMainWindow):
                 self._register_trigger_key()
         else:
             self.log_message("导入配置: 未找到有效的 hotkey,保留当前触发键", "warning")
-
         self.lbl_offset_left.setText(self.offset_left_key)
         self.lbl_offset_right.setText(self.offset_right_key)
         if isinstance(data.get("realtime_offset_enabled"), bool):
@@ -2191,7 +2148,6 @@ class ADOFAIPlayer(QMainWindow):
             self.suppress_bound_keys_check.blockSignals(False)
         self._apply_key_output_options()
         self._refresh_direction_keys()
-
         mode = data.get("macro_end_mode", self.macro_end_mode)
         if mode not in ("trigger", "esc", "both"):
             mode = "both"
@@ -2202,13 +2158,11 @@ class ADOFAIPlayer(QMainWindow):
             self.macro_end_combo.blockSignals(False)
         if self.playback.is_playing:
             self._refresh_escape_hook()
-
         try:
             press_duration = max(1, int(data.get("press_duration", 40)))
         except (TypeError, ValueError):
             press_duration = 40
         self.press_duration_edit.setText(str(press_duration))
-
         tech = data.get("technique")
         if isinstance(tech, dict):
             self.technique_check.setChecked(bool(tech.get("enabled", self.technique_enabled)))
@@ -2228,10 +2182,8 @@ class ADOFAIPlayer(QMainWindow):
             hand = tech.get("main_hand", self.technique_main_hand)
             self.main_hand_combo.setCurrentText("右手" if hand in ("right", "右手") else "左手")
             self.technique_follow_speed_check.setChecked(bool(tech.get("follow_speed", True)))
-
         if isinstance(data.get("verbose"), bool):
             self.verbose_check.setChecked(data["verbose"])
-
         if data.get("rhythm_hint_speed") is not None:
             self.rhythm_hint_speed = self._migrate_rhythm_hint_speed(
                 data.get("rhythm_hint_speed")
@@ -2247,10 +2199,8 @@ class ADOFAIPlayer(QMainWindow):
         elif isinstance(data.get("rhythm_hint_multi_press"), bool):
             self.rhythm_hint_multi_fix = data["rhythm_hint_multi_press"]
         self._sync_rhythm_hint_options()
-
         if isinstance(data.get("rhythm_hint_enabled"), bool):
             self.set_rhythm_hint_enabled(data["rhythm_hint_enabled"])
-
         if data.get("falling_notes_speed") is not None:
             self.falling_notes_speed = self._migrate_rhythm_hint_speed(
                 data.get("falling_notes_speed")
@@ -2268,10 +2218,8 @@ class ADOFAIPlayer(QMainWindow):
         if isinstance(data.get("falling_notes_multi_fix"), bool):
             self.falling_notes_multi_fix = data["falling_notes_multi_fix"]
         self._sync_falling_notes_options()
-
         if isinstance(data.get("falling_notes_enabled"), bool):
             self.set_falling_notes_enabled(data["falling_notes_enabled"])
-
         if data.get("rhythm_hint_width") is not None:
             self.rhythm_hint_width = self._coerce_window_size(
                 data.get("rhythm_hint_width"),
@@ -2301,16 +2249,28 @@ class ADOFAIPlayer(QMainWindow):
             self.falling_notes_window.resize(
                 self.falling_notes_width, self.falling_notes_height
             )
-
+            
+        # 新增：讀取隨機偏移配置
+        if data.get("regular_offset_ms") is not None:
+            self.regular_offset_ms = float(data.get("regular_offset_ms", 5.0))
+        if data.get("irregular_offset_ms") is not None:
+            self.irregular_offset_ms = float(data.get("irregular_offset_ms", 10.0))
+        if hasattr(self, "regular_offset_edit"):
+            self.regular_offset_edit.blockSignals(True)
+            self.regular_offset_edit.setText(str(self.regular_offset_ms))
+            self.regular_offset_edit.blockSignals(False)
+        if hasattr(self, "irregular_offset_edit"):
+            self.irregular_offset_edit.blockSignals(True)
+            self.irregular_offset_edit.setText(str(self.irregular_offset_ms))
+            self.irregular_offset_edit.blockSignals(False)
+            
         self.config.update(self._collect_config())
-
         if self.file_path:
             self.generate_timeline()
             speed = float(self.speed_edit.text() or 1.0)
             self.playback.preload_timeline(self.timeline, speed)
             self._refresh_hint_windows()
             self.log_message("时间线已按新配置重新生成", "system")
-
 
     def toggle_play(self):
         if self.disable_trigger:
@@ -2324,7 +2284,6 @@ class ADOFAIPlayer(QMainWindow):
         if not self.file_path:
             QMessageBox.warning(self, "警告", "请先选择谱面文件")
             return
-
         self.playback.reset_offset()
         self._update_offset_display(0)
         if self.rhythm_hint_window is not None:
@@ -2332,9 +2291,7 @@ class ADOFAIPlayer(QMainWindow):
         if self.falling_notes_window is not None:
             self.falling_notes_window.reset_position()
         self._set_status("运行中...", "blue")
-
         self._register_direction_keys()
-
         try:
             self.playback.start(
                 self.verbose_check.isChecked(),
@@ -2362,7 +2319,6 @@ class ADOFAIPlayer(QMainWindow):
         self._set_status("就绪", "gray")
         self._clear_direction_hooks()
         self._unregister_escape_hook()
-
 
     def log_message(self, message, msg_type="system"):
         try:
@@ -2393,7 +2349,6 @@ class ADOFAIPlayer(QMainWindow):
         os._exit(0)
 
     def _save_config_file(self, reason=""):
-
         self._remember_hint_window_sizes()
         ok = config_module.save_config(
             self.config,
@@ -2429,6 +2384,8 @@ class ADOFAIPlayer(QMainWindow):
             rhythm_hint_width=self.rhythm_hint_width,
             falling_notes_width=self.falling_notes_width,
             falling_notes_height=self.falling_notes_height,
+            regular_offset_ms=self.regular_offset_ms,
+            irregular_offset_ms=self.irregular_offset_ms,
         )
         if reason and not ok:
             self.log_message(f"配置保存失败({reason})", "error")

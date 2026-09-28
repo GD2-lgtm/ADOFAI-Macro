@@ -1,61 +1,28 @@
 from .reader import ADOLevelData
 
-
 class ADOAngle():
     Angle_Correspondence = {
-        "p": 15.0,
-        "J": 30.0,
-        "E": 45.0,
-        "T": 60.0,
-        "o": 75.0,
-        "U": 90.0,
-        "q": 105.0,
-        "G": 120.0,
-        "Q": 135.0,
-        "H": 150.0,
-        "W": 165.0,
-        "L": 180.0,
-        "x": 195.0,
-        "N": 210.0,
-        "Z": 225.0,
-        "F": 240.0,
-        "V": 255.0,
-        "D": 270.0,
-        "Y": 285.0,
-        "B": 300.0,
-        "C": 315.0,
-        "M": 330.0,
-        "A": 345.0,
-        "R": 360.0,
-        "!": 999.0,
+        "p": 15.0, "J": 30.0, "E": 45.0, "T": 60.0, "o": 75.0,
+        "U": 90.0, "q": 105.0, "G": 120.0, "Q": 135.0, "H": 150.0,
+        "W": 165.0, "L": 180.0, "x": 195.0, "N": 210.0, "Z": 225.0,
+        "F": 240.0, "V": 255.0, "D": 270.0, "Y": 285.0, "B": 300.0,
+        "C": 315.0, "M": 330.0, "A": 345.0, "R": 360.0, "!": 999.0,
     }
-
     Angle_Relative_Correspondence = {
-        "t": 60.0,
-        "y": 300.0, 
-        "h": 120.0,
-        "j": -120.0,
-        "5": 72.0,
-        "6": -72.0,
-        "7": 52.0,
-        "8": -52.0,
-        "9": -30.0,
+        "t": 60.0, "y": 300.0, "h": 120.0, "j": -120.0,
+        "5": 72.0, "6": -72.0, "7": 52.0, "8": -52.0, "9": -30.0,
     }
-
     TWO_PLANET_PAUSE_BEAT_DIFF = -1
     THREE_PLANET_PAUSE_BEAT_DIFF = -1
-
 
     def _read_angle_data(self, ald: ADOLevelData):
         angle_data = ald.result.get("angleData")
         if angle_data:
             self._log("INIT", f"使用 angleData, 原始长度: {len(angle_data)}")
             return list(angle_data)
-
         path_data = ald.result.get("pathData")
         if not path_data:
             raise ADOLevelData.exception("谱面里既没有 angleData 也没有 pathData")
-
         converted = []
         for index, char in enumerate(path_data):
             value = self.Angle_Correspondence.get(char)
@@ -67,12 +34,7 @@ class ADOAngle():
                     self.pathDataUnknownChars.setdefault(char, []).append(index)
                     value = converted[-1] if converted else 0.0
             converted.append(value)
-
-        self._log(
-            "INIT",
-            f"使用 pathData 转换, 原始长度: {len(converted)}, "
-            f"pathData: {path_data[:50]}...",
-        )
+        self._log("INIT", f"使用 pathData 转换, 原始长度: {len(converted)}, pathData: {path_data[:50]}...")
         if self.pathDataUnknownChars:
             parts = []
             for char, positions in sorted(self.pathDataUnknownChars.items()):
@@ -83,8 +45,7 @@ class ADOAngle():
             message = (
                 f"pathData 里有 {len(self.pathDataUnknownChars)} 种角度表外的字符: "
                 + "；".join(parts)
-                + "。这些格子已按「沿用上一格角度(直行)」处理，"
-                "请检查该处谱面。"
+                + "。这些格子已按「沿用上一格角度(直行)」处理，请检查该处谱面。"
             )
             self._log("INIT", "警告: " + message)
             print("[解析警告] " + message)
@@ -94,7 +55,6 @@ class ADOAngle():
         self._logger = None
         self.pathDataUnknownChars = {}
         self.angleData = self._read_angle_data(ald)
-
         self.floorNum = len(self.angleData)
         self.settings = ald.result['settings']
         self.actions = ald.result['actions']
@@ -118,24 +78,20 @@ class ADOAngle():
     def getRotateAngle(self):
         self._log("ROTATE", "=" * 60)
         self._log("ROTATE", "开始计算旋转角度")
-
         angleData = self.angleData
         floorNum = len(angleData)
-
         self._log("ROTATE", f"原始 angleData 前20个: {angleData[:20]}")
         self._log("ROTATE", f"中旋轨道(999)位置: {[i for i, a in enumerate(angleData) if a == 999][:20]}...")
-
         self.angleData[:] = [
             999.0 if a == 999 else (a + 360.0 if a <= 0 else float(a))
             for a in angleData
         ]
         angleData = self.angleData
         self._log("ROTATE", f"标准化后 angleData 前20个: {angleData[:20]}")
-
         entry = [0.0] * (floorNum + 1)
         exitAngle = [0.0] * (floorNum + 1)
         isMidspin = [False] * (floorNum + 1)
-        entry[0] = 270.0  
+        entry[0] = 270.0
         for j in range(floorNum):
             if angleData[j] == 999:
                 exitAngle[j] = entry[j]
@@ -144,7 +100,6 @@ class ADOAngle():
                 exitAngle[j] = (90.0 - angleData[j]) % 360.0
             entry[j + 1] = (exitAngle[j] + 180.0) % 360.0
         exitAngle[floorNum] = (entry[floorNum] + 180.0) % 360.0
-
         twirlAt = set()
         planetsAt = {}
         pauseAt = {}
@@ -197,38 +152,31 @@ class ADOAngle():
         ccw = False
         planetNum = 2
         calcLog = []
-
         for j in range(floorNum):
             if j in twirlAt:
                 ccw = not ccw
             if j in planetsAt:
                 planetNum = planetsAt[j]
-
             inverse = inverseAnglePerBeat(planetNum)
             offset = -inverse if ccw else inverse
             if isMidspin[j]:
                 offset = 0.0
             elif j > 0 and isMidspin[j - 1] and planetNum > 2:
                 offset -= (-(360.0 + inverse) if ccw else (360.0 + inverse))
-
             startAngle = entry[j] + offset
             endAngle = exitAngle[j] + (offset if isMidspin[j] else 0.0)
             travel = movedDegrees(startAngle, endAngle, not ccw)
             if travel <= 1e-6 or travel >= 360.0 - 1e-6:
                 travel = 0.0 if isMidspin[j] else 360.0
-
             if not isMidspin[j] and j in pauseAt:
                 travel += pauseAt[j] * 180.0
-
             if j in holdAt and holdAt[j] >= 0:
                 travel += holdAt[j] * 360.0
-
             if j in freeRoamAt:
                 duration = int(freeRoamAt[j])
                 if duration >= 2:
                     beats = defaultLength[j] / 180.0
                     travel += max(beats, duration - beats) * 180.0
-
             rotateAngleList[j] = travel
             if j < 12 or (j in pauseAt or j in holdAt):
                 calcLog.append(
@@ -244,6 +192,7 @@ class ADOAngle():
                 rotateAngleList[j] = 999.0
             else:
                 lastReal = j
+
         for j in range(floorNum):
             if not isMidspin[j]:
                 rotateAngleList[j] = 0.0
@@ -254,14 +203,42 @@ class ADOAngle():
             self._log("ROTATE", line)
         if len(calcLog) > 15:
             self._log("ROTATE", f"  ... ({len(calcLog) - 15} more lines)")
-
         self.originRotateAngleList = rotateAngleList
         self.rotateAngleList = self._removeUselessTiles(rotateAngleList)
-
         self._log("ROTATE", f"最终 rotateAngleList (去999后) 长度: {len(self.rotateAngleList)}")
         self._log("ROTATE", f"前20个: {[round(x, 2) for x in self.rotateAngleList[:20]]}")
 
+        # ================= 新增：計算軌道夾角 (Turn Angle) =================
+        clean_angles = [a for a in self.angleData if a != 999.0]
+        self.turnAngleList = []
+        for i in range(len(clean_angles) - 1):
+            turn = (clean_angles[i+1] - clean_angles[i]) % 360.0
+            self.turnAngleList.append(turn)
+        if clean_angles:
+            self.turnAngleList.append(180.0) # 最後一個軌道補 180 度
+        self._log("ROTATE", f"軌道夾角列表 (turnAngleList) 長度: {len(self.turnAngleList)}")
+        self._log("ROTATE", f"前20個: {[round(x, 2) for x in self.turnAngleList[:20]]}")
+        # =====================================================================
+
         return self.rotateAngleList
+
+    # ================= 新增：獲取與按鍵列表對齊的角度 =================
+    def getMacroTurnAngles(self, key_info_list):
+        """
+        根據最終的按鍵列表 (key_info_list)，提取對應長度的軌道夾角。
+        這個列表可以直接傳給 timeline.py 的 angles 參數。
+        """
+        if not hasattr(self, 'turnAngleList'):
+            self.getRotateAngle()
+        angles = []
+        for item in key_info_list:
+            floor = item.get('floor', 0)
+            if 0 <= floor < len(self.turnAngleList):
+                angles.append(self.turnAngleList[floor])
+            else:
+                angles.append(180.0) # 越界補 180
+        return angles
+    # =====================================================================
 
     def _removeUselessTiles(self, l):
         result = [angle for angle in l if angle != 999]
@@ -323,10 +300,8 @@ class ADOAngle():
         next_floor = hold_floor + 1
         if next_floor >= self.floorNum:
             return False
-
         if self.angleData[next_floor] != 999:
             return False
-
         has_auto_start = False
         for a in self.actions:
             if a['eventType'] == 'AutoPlayTiles':
@@ -335,10 +310,8 @@ class ADOAngle():
                 if a['floor'] == next_floor and a['enabled'] == True:
                     has_auto_start = True
                     break
-
         if not has_auto_start:
             return False
-
         self._log("HOLD_FLOOR", f"  -> [特殊处理] Hold@{hold_floor} 的下一格({next_floor})是中旋+AutoPlay开")
         self._log("HOLD_FLOOR", f"     Hold 变为普通点击，不加入长按列表")
         return True
@@ -346,7 +319,6 @@ class ADOAngle():
     def getAutoPlayFloors(self):
         autoTileList = self.getAutoTileList()
         auto_floors = set()
-
         for start, end in autoTileList:
             new_start = start
             new_end = end
@@ -358,51 +330,42 @@ class ADOAngle():
                         new_end -= 1
             for f in range(new_start, new_end):
                 auto_floors.add(f)
-
         self._log("AUTOPLAY", f"去999后的AutoPlay区间索引: {sorted(auto_floors)}")
         return auto_floors
 
     def getHoldFloors(self):
         self._log("HOLD_FLOOR", "=" * 60)
         self._log("HOLD_FLOOR", "开始计算压缩后的长按轨道索引")
-
         if not hasattr(self, 'pressIntervalList'):
             self._log("HOLD_FLOOR", "pressIntervalList 未计算，先调用 getPressIntervalList()")
             self.getPressIntervalList()
-
         hold_dict = self.getHoldDict()
         if not hold_dict:
             self._log("HOLD_FLOOR", "没有长按事件，返回空列表")
             return []
-
         auto_tile_list = self.getAutoTileList()
         self._log("HOLD_FLOOR", f"原始长按: {sorted(hold_dict.keys())}")
         self._log("HOLD_FLOOR", f"自动方块区间: {auto_tile_list}")
         self._log("HOLD_FLOOR", f"原始 angleData 长度: {len(self.angleData)}")
         self._log("HOLD_FLOOR", f"中旋轨道(999)位置: {[i for i, a in enumerate(self.angleData) if a == 999]}")
-
         adjusted = []
         step_log = []
-
         for floor in sorted(hold_dict):
             if self._is_hold_followed_by_autoplay_midspin(floor):
                 step_log.append(f"\n[处理 floor={floor + 1}]")
                 step_log.append(f"  -> 跳过：下一格是中旋+AutoPlay开，Hold变为普通点击")
                 continue
-
             new_floor = floor
             midspin_count = 0
             for i, angle in enumerate(self.angleData):
                 if angle == 999 and floor > i:
                     new_floor -= 1
                     midspin_count += 1
-
             step_log.append(f"\n[处理 floor={floor + 1}]")
             step_log.append(f"  原始floor={floor + 1}")
             if midspin_count > 0:
                 step_log.append(f"  -> 原始floor({floor + 1})之前有中旋轨道 {midspin_count} 个")
                 step_log.append(f"  -> 去999后索引 = {new_floor}")
-
             dropped = False
             for start, end in auto_tile_list:
                 new_start = start
@@ -413,30 +376,23 @@ class ADOAngle():
                             new_start -= 1
                         if end > i:
                             new_end -= 1
-
                 if new_start <= new_floor < new_end:
                     dropped = True
-                    step_log.append(
-                        f"  -> 位于自动方块区间 [{start + 1},{end + 1}) -> 去999后[{new_start},{new_end})，丢弃!")
+                    step_log.append(f"  -> 位于自动方块区间 [{start + 1},{end + 1}) -> 去999后[{new_start},{new_end})，丢弃!")
                     break
                 elif new_floor >= new_end:
                     old = new_floor
                     new_floor -= new_end - new_start
-                    step_log.append(
-                        f"  -> 去999后索引({old}) >= 自动方块结束({new_end})，减去区间长度 {new_end - new_start}: {old} -> {new_floor}")
-
+                    step_log.append(f"  -> 去999后索引({old}) >= 自动方块结束({new_end})，减去区间长度 {new_end - new_start}: {old} -> {new_floor}")
             if not dropped:
                 step_log.append(f"  未被丢弃，当前去999后索引 = {new_floor}")
-
                 if 0 <= new_floor < len(self.pressIntervalList):
                     adjusted.append(new_floor)
                     step_log.append(f"  -> 有效! 加入结果: {new_floor}")
                 else:
                     step_log.append(f"  -> 越界! 0 <= {new_floor} < {len(self.pressIntervalList)} ? 否，丢弃")
-
         for line in step_log:
             self._log("HOLD_FLOOR", line)
-
         self._log("HOLD_FLOOR", f"\n最终结果: {adjusted}")
         self._log("HOLD_FLOOR", f"共 {len(adjusted)} 个有效长按轨道")
         return adjusted
@@ -444,7 +400,6 @@ class ADOAngle():
     def getBeatList(self):
         if not hasattr(self, 'originRotateAngleList'):
             self.getRotateAngle()
-
         rotateAngle = self.originRotateAngleList
         beatList = []
         for angle in rotateAngle:
@@ -455,7 +410,6 @@ class ADOAngle():
         self.originBeatList = beatList
         beatList2 = self._removeUselessTiles(beatList)
         self.beatList = beatList2
-
         self._log("BEAT", f"拍子列表 (去999后) 长度: {len(self.beatList)}")
         self._log("BEAT", f"前20个: {[round(x, 4) for x in self.beatList[:20]]}")
         return beatList2
@@ -465,7 +419,6 @@ class ADOAngle():
             base_bpm = self.settings['bpm']
         if not hasattr(self, 'originRotateAngleList'):
             self.getRotateAngle()
-
         tile_angles = []
         cum_angle = [0.0]
         for angle in self.originRotateAngleList:
@@ -473,9 +426,7 @@ class ADOAngle():
             tile_angles.append(span)
             cum_angle.append(cum_angle[-1] + span)
         total_angle = cum_angle[-1]
-
         current_bpm = self.settings['bpm']
-
         speed_events = []
         for action in self.actions:
             if action['eventType'] != 'SetSpeed':
@@ -483,22 +434,17 @@ class ADOAngle():
             if not self._is_action_active(action):
                 continue
             if action['floor'] >= len(tile_angles):
-                self._log("ABS_BEAT",
-                          f"  WARNING: SetSpeed floor {action['floor']} >= tile count {len(tile_angles)}, skip")
+                self._log("ABS_BEAT", f"  WARNING: SetSpeed floor {action['floor']} >= tile count {len(tile_angles)}, skip")
                 continue
             abs_angle = cum_angle[action['floor']] + float(action.get('angleOffset', 0))
             clamped = max(0.0, min(abs_angle, total_angle))
             if clamped != abs_angle:
-                self._log("ABS_BEAT",
-                          f"  WARNING: floor {action['floor']} angleOffset clamped: {abs_angle:.2f} -> {clamped:.2f}")
+                self._log("ABS_BEAT", f"  WARNING: floor {action['floor']} angleOffset clamped: {abs_angle:.2f} -> {clamped:.2f}")
             speed_events.append((clamped, action))
         speed_events.sort(key=lambda item: item[0])
-
         self._log("ABS_BEAT", f"SetSpeed事件(按角度排序):")
         for ang, act in speed_events[:10]:
-            self._log("ABS_BEAT",
-                      f"  angle={ang:.2f}, floor={act['floor']}, type={act['speedType']}, value={act.get('beatsPerMinute', act.get('bpmMultiplier', 'N/A'))}")
-
+            self._log("ABS_BEAT", f"  angle={ang:.2f}, floor={act['floor']}, type={act['speedType']}, value={act.get('beatsPerMinute', act.get('bpmMultiplier', 'N/A'))}")
         segments = []
         pos_angle = 0.0
         seg_log = []
@@ -516,7 +462,6 @@ class ADOAngle():
         if total_angle > pos_angle:
             segments.append((pos_angle, total_angle, current_bpm))
             seg_log.append(f"  segment: {pos_angle:.2f} -> {total_angle:.2f}, BPM={current_bpm}")
-
         for line in seg_log[:15]:
             self._log("ABS_BEAT", line)
         return segments
@@ -524,16 +469,12 @@ class ADOAngle():
     def getAbsBeatList(self, bpm=-1):
         self._log("ABS_BEAT", "=" * 60)
         self._log("ABS_BEAT", "开始计算绝对节拍")
-
         if bpm < 0:
             bpm = self.settings['bpm']
         self._log("ABS_BEAT", f"基准 BPM: {bpm}")
-
         if not hasattr(self, 'originBeatList'):
             self.getBeatList()
-
         base_bpm = bpm
-
         tile_angles = []
         cum_angle = [0.0]
         for angle in self.originRotateAngleList:
@@ -541,24 +482,18 @@ class ADOAngle():
             tile_angles.append(span)
             cum_angle.append(cum_angle[-1] + span)
         total_angle = cum_angle[-1]
-
         self._log("ABS_BEAT", f"总角度: {total_angle:.2f}")
         self._log("ABS_BEAT", f"累计角度前10个: {[round(x, 2) for x in cum_angle[:11]]}")
-
         segments = self._buildSpeedSegments(base_bpm)
-
         beats = [0.0] * len(self.originBeatList)
         detail_log = []
-
         for floor in range(len(self.originBeatList)):
             if self.originBeatList[floor] == 999:
                 beats[floor] = 999
                 continue
-
             tile_start = cum_angle[floor]
             tile_end = cum_angle[floor + 1]
             tile_beats = 0.0
-
             for seg_start, seg_end, seg_bpm in segments:
                 ov_start = max(seg_start, tile_start)
                 ov_end = min(seg_end, tile_end)
@@ -566,19 +501,14 @@ class ADOAngle():
                     contrib = (ov_end - ov_start) / 180.0 * (base_bpm / seg_bpm)
                     tile_beats += contrib
                     if floor < 5:
-                        detail_log.append(
-                            f"  floor {floor}: seg [{seg_start:.1f},{seg_end:.1f}] BPM={seg_bpm}, overlap=[{ov_start:.1f},{ov_end:.1f}], contrib={contrib:.6f}")
-
+                        detail_log.append(f"  floor {floor}: seg [{seg_start:.1f},{seg_end:.1f}] BPM={seg_bpm}, overlap=[{ov_start:.1f},{ov_end:.1f}], contrib={contrib:.6f}")
             beats[floor] = tile_beats
             if floor < 5:
                 detail_log.append(f"  floor {floor}: total_beats={tile_beats:.6f}")
-
         for line in detail_log:
             self._log("ABS_BEAT", line)
-
         autoTileList = self.getAutoTileList()
         self._log("ABS_BEAT", f"自动方块区间: {autoTileList}")
-
         auto_log = []
         for start, end in autoTileList:
             if start >= len(beats):
@@ -593,14 +523,11 @@ class ADOAngle():
                 auto_log.append(f"  区间 [{start+1},{end+1}): 持续到结束，舍去 floor {start+1} 之后")
                 for j in range(start, len(beats)):
                     beats[j] = 999
-
         for line in auto_log:
             self._log("ABS_BEAT", line)
-
         absoluteBeatList = self._removeUselessTiles(beats)
         self.absBeatList = absoluteBeatList
         self.basebpm = bpm
-
         self._log("ABS_BEAT", f"最终绝对节拍列表长度: {len(self.absBeatList)}")
         self._log("ABS_BEAT", f"前20个: {[round(x, 4) for x in self.absBeatList[:20]]}")
         return absoluteBeatList
@@ -610,18 +537,15 @@ class ADOAngle():
             self.getPressIntervalList()
         if not hasattr(self, 'basebpm'):
             self.basebpm = self.settings['bpm']
-
         base_bpm = self.basebpm
         segments = self._buildSpeedSegments(base_bpm)
         ms_per_beat = 60000.0 / base_bpm if base_bpm > 0 else 0.0
-
         timeline = []
         beats = 0.0
         for start_angle, end_angle, seg_bpm in segments:
             timeline.append((beats * ms_per_beat, seg_bpm))
             if seg_bpm > 0:
                 beats += (end_angle - start_angle) / 180.0 * (base_bpm / seg_bpm)
-
         self.bpmTimeline = timeline
         self._log("BPM_LIST", "BPM 变化点(时间轴与按键时间一致):")
         for time_ms, seg_bpm in timeline[:20]:
@@ -633,18 +557,13 @@ class ADOAngle():
     def getPressIntervalList(self):
         if not hasattr(self, 'absBeatList'):
             self.getAbsBeatList()
-
         if not hasattr(self, 'basebpm'):
             self.basebpm = self.settings['bpm']
-
         beatPressTime = 60000 / self.basebpm
         pressIntervalList = []
-
         for beat in self.absBeatList:
             pressIntervalList.append(beatPressTime * beat)
-
         self.pressIntervalList = pressIntervalList
-
         self._log("INTERVAL", f"按键间隔列表长度: {len(self.pressIntervalList)}")
         self._log("INTERVAL", f"beatPressTime (1拍@basebpm={self.basebpm}): {beatPressTime:.4f}ms")
         self._log("INTERVAL", f"前20个间隔: {[round(x, 2) for x in self.pressIntervalList[:20]]}")
@@ -659,13 +578,10 @@ class ADOAngle():
     def getMacroCumulativeTimes(self):
         if not hasattr(self, 'macroPressIntervalList'):
             self.getMacroPressIntervalList()
-
         cumulative_times = [0]
         for interval in self.pressIntervalList:
             cumulative_times.append(cumulative_times[-1] + interval)
-
         self.macroCumulativeTimes = cumulative_times
-
         self._log("CUMULATIVE", f"累计时间列表长度: {len(self.macroCumulativeTimes)}")
         self._log("CUMULATIVE", f"前20个: {[round(x, 2) for x in self.macroCumulativeTimes[:20]]}")
         return cumulative_times
@@ -693,24 +609,19 @@ class ADOAngle():
     def getMacroKeyInfo(self):
         self._log("KEYINFO", "=" * 60)
         self._log("KEYINFO", "开始生成 MacroKeyInfo")
-
         if not hasattr(self, 'pressIntervalList'):
             self.getPressIntervalList()
-
         hold_floors = set(self.getHoldFloors())
         auto_floors = set(self.getAutoPlayFloors())
         intervals = self.pressIntervalList
-
         hold_dict = self.getHoldDict()
         auto_tile_list = self.getAutoTileList()
         skip_release_floors = set()
-
         for hold_floor in sorted(hold_dict.keys()):
             new_floor = hold_floor
             for idx, angle in enumerate(self.angleData):
                 if angle == 999 and hold_floor > idx:
                     new_floor -= 1
-
             in_autoplay = False
             for start, end in auto_tile_list:
                 new_start = start
@@ -719,13 +630,11 @@ class ADOAngle():
                     if angle == 999:
                         if start > idx: new_start -= 1
                         if end > idx: new_end -= 1
-
                 if new_start <= new_floor < new_end:
                     in_autoplay = True
                     break
                 elif new_floor >= new_end:
                     new_floor -= new_end - new_start
-
             if in_autoplay or new_floor in auto_floors:
                 release_raw_idx = hold_floor
                 release_new_idx = release_raw_idx
@@ -734,11 +643,9 @@ class ADOAngle():
                         release_new_idx -= 1
                 skip_release_floors.add(release_new_idx)
                 self._log("KEYINFO", f"  Hold@{hold_floor} 在AutoPlay中开始，释放拍索引{release_new_idx} 跳过")
-
         cumulative = [0]
         for interval in intervals:
             cumulative.append(cumulative[-1] + interval)
-
         new_to_raw = {}
         new_idx = 0
         for i, angle in enumerate(self.angleData):
@@ -746,78 +653,55 @@ class ADOAngle():
                 continue
             new_to_raw[new_idx] = i + 1
             new_idx += 1
-
         self._log("KEYINFO", f"轨道数: {len(intervals)}, 累计时间点数: {len(cumulative)}")
         self._log("KEYINFO", f"长按轨道索引: {sorted(hold_floors)}")
         self._log("KEYINFO", f"AutoPlay轨道索引: {sorted(auto_floors)}")
         self._log("KEYINFO", f"Hold释放拍跳过索引: {sorted(skip_release_floors)}")
-
         key_info_list = []
         detail_log = []
-
         for i in range(len(intervals)):
             actual_floor = new_to_raw.get(i, '?')
-
             if i in auto_floors:
                 detail_log.append(f"  floor {i}: AutoPlay区间，跳过 (实际位置floor {actual_floor}, 时间仍流逝)")
                 continue
-
             if i in skip_release_floors:
                 detail_log.append(f"  floor {i}: Hold释放拍(AutoPlay期间开始)，跳过 (实际位置floor {actual_floor})")
                 continue
-
             if i in hold_floors:
                 if i == 0:
                     release_time = cumulative[2] if len(cumulative) > 2 else cumulative[1]
                     key_info_list.append({
-                        'raw_idx': i,
-                        'press_time': cumulative[1],
-                        'release_time': release_time,
-                        'is_hold': True,
+                        'raw_idx': i, 'press_time': cumulative[1], 'release_time': release_time, 'is_hold': True,
                     })
-                    detail_log.append(
-                        f"  floor {i}: 第0层长按 -> 独立按键, press={cumulative[1]:.2f}, release={release_time:.2f} (实际位置floor {actual_floor})")
+                    detail_log.append(f"  floor {i}: 第0层长按 -> 独立按键, press={cumulative[1]:.2f}, release={release_time:.2f} (实际位置floor {actual_floor})")
                 elif (i - 1) in hold_floors:
                     key_info_list.append({
-                        'raw_idx': i - 1,
-                        'press_time': cumulative[i],
-                        'release_time': cumulative[i + 1],
-                        'is_hold': True,
+                        'raw_idx': i - 1, 'press_time': cumulative[i], 'release_time': cumulative[i + 1], 'is_hold': True,
                     })
-                    detail_log.append(
-                        f"  floor {i}: 相邻长按 -> 新独立按键, press={cumulative[i]:.2f}, release={cumulative[i + 1]:.2f} (实际位置floor {actual_floor})")
+                    detail_log.append(f"  floor {i}: 相邻长按 -> 新独立按键, press={cumulative[i]:.2f}, release={cumulative[i + 1]:.2f} (实际位置floor {actual_floor})")
                 else:
                     if key_info_list:
                         old_release = key_info_list[-1].get('release_time')
                         key_info_list[-1]['release_time'] = cumulative[i + 1]
                         key_info_list[-1]['is_hold'] = True
-                        detail_log.append(
-                            f"  floor {i}: 长按 -> 延长前一个按键 release: {old_release} -> {cumulative[i + 1]:.2f} (实际位置floor {actual_floor})")
+                        detail_log.append(f"  floor {i}: 长按 -> 延长前一个按键 release: {old_release} -> {cumulative[i + 1]:.2f} (实际位置floor {actual_floor})")
                     else:
                         detail_log.append(f"  floor {i}: 长按但无前一个按键，跳过 (实际位置floor {actual_floor})")
                 continue
-
             key_info_list.append({
-                'raw_idx': i,
-                'press_time': cumulative[i + 1],
-                'release_time': None,
-                'is_hold': False,
+                'raw_idx': i, 'press_time': cumulative[i + 1], 'release_time': None, 'is_hold': False,
             })
             detail_log.append(f"  floor {i}: 普通按键, press={cumulative[i + 1]:.2f} (实际位置floor {actual_floor})")
-
         for item in key_info_list:
             raw_idx = item.get('raw_idx')
             item['floor'] = max(0, new_to_raw.get(raw_idx, raw_idx) - 1)
-
         for line in detail_log:
             self._log("KEYINFO", line)
-
         self.macroKeyInfo = key_info_list
         self._log("KEYINFO", f"最终 key_info_list 长度: {len(key_info_list)}")
         self._log("KEYINFO", f"完整列表:")
         for idx, item in enumerate(key_info_list):
             release = item['release_time'] if item['release_time'] is not None else 'None'
             actual_floor = new_to_raw.get(item['raw_idx'], '?')
-            self._log("KEYINFO",
-                      f"  floor {idx}: raw_idx={item['raw_idx']}, press={item['press_time']:.2f}, release={release}, is_hold={item['is_hold']} (实际位置floor {actual_floor})")
+            self._log("KEYINFO", f"  floor {idx}: raw_idx={item['raw_idx']}, press={item['press_time']:.2f}, release={release}, is_hold={item['is_hold']} (实际位置floor {actual_floor})")
         return key_info_list

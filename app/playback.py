@@ -1,11 +1,8 @@
 import threading
 import time
-
 import keyboard
-
 from .console import PERF_FREQ, get_perf_counter_raw
 from .keys import KeyInjector, resolve_key_codes
-
 
 class PlaybackEngine:
     def __init__(self, log_message):
@@ -22,7 +19,6 @@ class PlaybackEngine:
         self.speed = 1.0
         self._thread = None
         self._start_counter = None
-
         self._keyboard_hooks = []
 
     def preload_timeline(self, timeline, speed=1.0):
@@ -67,12 +63,10 @@ class PlaybackEngine:
             actual_delta = float(step) * multiplier
         else:
             actual_delta = 10.0 * multiplier
-
         if absolute:
             self.offset_ms = actual_delta
         else:
             self.offset_ms += actual_delta
-
         return self.offset_ms
 
     def reset_offset(self):
@@ -182,7 +176,6 @@ class PlaybackEngine:
             start_counter = get_perf_counter_raw()
             self._start_counter = start_counter
             self._send_status(status, ("started", start_counter))
-
             groups = []
             for event_time, key, action in self.timeline:
                 base = start_counter + (event_time / speed) * counter_per_ms
@@ -190,13 +183,10 @@ class PlaybackEngine:
                     groups[-1][1].append((key, action))
                 else:
                     groups.append((base, [(key, action)]))
-
             est_counter = 2.0 * counter_per_ms
-
             for base, actions in groups:
                 if self._poll_control(control):
                     break
-
                 while True:
                     if self._poll_control(control):
                         break
@@ -210,10 +200,8 @@ class PlaybackEngine:
                         if control is not None:
                             sleep_ms = min(max(sleep_ms, 0.001), 0.02)
                         time.sleep(sleep_ms)
-
                 if not self.is_playing:
                     break
-
                 inputs = []
                 for key, action in actions:
                     code = self._key_to_codes(key)[0]
@@ -226,7 +214,6 @@ class PlaybackEngine:
                     else:
                         inputs.append(self.injector.input_for(code, keyup=True))
                         self._held_keys.discard(key)
-
                 t0 = get_perf_counter_raw()
                 if self.key_output_enabled:
                     ok = self.injector.send(inputs)
@@ -234,7 +221,6 @@ class PlaybackEngine:
                     ok = True
                 t1 = get_perf_counter_raw()
                 est_counter = est_counter * 0.9 + (t1 - t0) * 0.1
-
                 if not ok:
                     for key, action in actions:
                         try:
@@ -245,7 +231,6 @@ class PlaybackEngine:
                         except Exception as e:
                             self.log_message(f"按键失败 [{key}]: {e}", "error")
                     self.log_message("SendInput 注入失败,已回退", "error")
-
                 if self.verbose:
                     for key, action in actions:
                         t_ms = (base - start_counter) * ms_per_counter + self.offset_ms
@@ -253,9 +238,7 @@ class PlaybackEngine:
                             self.log_message(f"[{t_ms:.1f}ms] Press {key}", "key")
                         else:
                             self.log_message(f"[{t_ms:.1f}ms] Release {key}", "delay")
-
             self.log_message("=== Macro 结束 ===", "system")
-
         except Exception as e:
             self.log_message(f"错误: {e}", "error")
             import traceback

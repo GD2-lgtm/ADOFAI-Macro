@@ -16,9 +16,9 @@
   "hotkey": "insert",
   "press_duration": 40,
   "technique": {
-    "enabled": true,
+    "enabled": false,
     "style": "内轮",
-    "single_kps": 9.5,
+    "single_kps": 8.5,
     "main_hand": "right",
     "follow_speed": true
   },
@@ -42,5 +42,7 @@
   "disable_key_output": false,
   "suppress_bound_keys": true,
   "falling_notes_multi_fix": true,
-  "falling_notes_hit_effect": true
+  "falling_notes_hit_effect": true,
+  "regular_offset_ms": 5.0,
+  "irregular_offset_ms": 10.0
 }

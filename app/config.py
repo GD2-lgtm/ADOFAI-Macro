@@ -4,9 +4,8 @@ import os
 import sys
 from pathlib import Path
 
-
 def _config_dir():
-    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+    if getattr(sys, "frozen", False) or "compiled" in globals():
         onefile_dir = os.environ.get("NUITKA_ONEFILE_DIRECTORY")
         if onefile_dir:
             return Path(onefile_dir)
@@ -16,9 +15,7 @@ def _config_dir():
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
 
-
 CONFIG_FILE = _config_dir() / "config.json"
-
 _DEFAULT_CONFIG_FILE = Path(__file__).resolve().parent.parent / "config.json"
 
 _DEFAULT_CONFIG = {
@@ -48,7 +45,7 @@ _DEFAULT_CONFIG = {
     "press_duration": 50,
     "technique": {
         "enabled": True,
-        "style": "\u5185\u8f6e",
+        "style": "内轮",
         "single_kps": 7.3,
         "main_hand": "right",
         "follow_speed": True,
@@ -89,7 +86,6 @@ except Exception:
 _KEY_ARRAY_FIELDS = ("left_keys", "right_keys", "keys")
 _KEY_CHUNK_SIZE = 4
 
-
 def _format_key_array(name, values):
     lines = []
     for start in range(0, len(values), _KEY_CHUNK_SIZE):
@@ -101,23 +97,20 @@ def _format_key_array(name, values):
         return f'  "{name}": []'
     return f'  "{name}": [\n' + ",\n".join(lines) + "\n  ]"
 
-
 def _dump_config_text(config):
     data = dict(config)
     markers = {}
     for field in _KEY_ARRAY_FIELDS:
         values = data.get(field)
         if isinstance(values, list):
-            marker = f"__ADOFAI_KEY_ARRAY_{field}__"
+            marker = f"_ADOFAI_KEY_ARRAY{field}__"
             markers[marker] = (field, values)
             data[field] = marker
-
     text = json.dumps(data, indent=2, ensure_ascii=False)
     for marker, (field, values) in markers.items():
         old = f'  "{field}": {json.dumps(marker, ensure_ascii=False)}'
         text = text.replace(old, _format_key_array(field, values), 1)
     return text
-
 
 def load_config():
     try:
@@ -129,20 +122,20 @@ def load_config():
         print(f"加载配置失败: {e}")
         return copy.deepcopy(DEFAULT_CONFIG)
 
-
 def save_config(config, *, left_keys, right_keys, macro_hotkey, press_duration,
                 technique, verbose, offset_left_key="left", offset_right_key="right",
                 realtime_offset_enabled=True, macro_end_mode="both",
-                 disable_key_output=False, suppress_bound_keys=True,
-                 rhythm_hint_enabled=False, rhythm_hint_speed=100,
-                 rhythm_hint_division=4, rhythm_hint_hit_effect=True,
-                 rhythm_hint_multi_fix=True,
-                 falling_notes_enabled=False, falling_notes_speed=100,
-                 falling_notes_division=4, falling_notes_lanes=4,
-                 falling_notes_hit_effect=False,
-                 falling_notes_multi_fix=True,
-                 rhythm_hint_width=900, falling_notes_width=380,
-                 falling_notes_height=820):
+                disable_key_output=False, suppress_bound_keys=True,
+                rhythm_hint_enabled=False, rhythm_hint_speed=100,
+                rhythm_hint_division=4, rhythm_hint_hit_effect=True,
+                rhythm_hint_multi_fix=True,
+                falling_notes_enabled=False, falling_notes_speed=100,
+                falling_notes_division=4, falling_notes_lanes=4,
+                falling_notes_hit_effect=False,
+                falling_notes_multi_fix=True,
+                rhythm_hint_width=900, falling_notes_width=380,
+                falling_notes_height=820,
+                regular_offset_ms=5.0, irregular_offset_ms=10.0):
     try:
         config.pop("death_key", None)
         for key in ("rhythm_hint_multi_threshold", "rhythm_hint_multi_press",
@@ -151,6 +144,7 @@ def save_config(config, *, left_keys, right_keys, macro_hotkey, press_duration,
                     "rhythm_hint_multi_gap_beats",
                     "falling_notes_multi_threshold"):
             config.pop(key, None)
+        
         config["left_keys"] = left_keys
         config["right_keys"] = right_keys
         config["keys"] = left_keys + right_keys
@@ -179,13 +173,15 @@ def save_config(config, *, left_keys, right_keys, macro_hotkey, press_duration,
         config["rhythm_hint_width"] = int(rhythm_hint_width)
         config["falling_notes_width"] = int(falling_notes_width)
         config["falling_notes_height"] = int(falling_notes_height)
+        config["regular_offset_ms"] = float(regular_offset_ms)
+        config["irregular_offset_ms"] = float(irregular_offset_ms)
+        
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             f.write(_dump_config_text(config) + "\n")
         return True
     except Exception as e:
         print(f"保存配置失败: {e}")
         return False
-
 
 def export_config(path, config):
     try:
@@ -195,7 +191,6 @@ def export_config(path, config):
     except Exception as e:
         print(f"导出配置失败: {e}")
         return False
-
 
 def import_config(path):
     try:

@@ -109,13 +109,22 @@ def _project_group_to_allowed(keys, allowed, left_keys, right_keys):
 def build_timeline(macro_key_info, custom_keys, press_duration,
                    key_assignments=None, key_hold_ms=None, speed=1.0,
                    key_allowed=None, left_keys=None, right_keys=None,
-                   key_groups=None):
+                   key_groups=None,
+                   angles=None,
+                   regular_offset_ms=5.0,
+                   irregular_offset_ms=10.0):
+    """
+    生成時間軸
+    :param angles: 一個 list，包含每個按鍵對應的軌道角度。
+    :param regular_offset_ms: 規則角度（或雙押/三連音）的隨機偏移量，預設 ±5ms。
+    :param irregular_offset_ms: 不規則角度的隨機偏移量，預設 ±10ms。
+    """
     timeline = []
     press_duration = max(1, int(press_duration or 40))
     press_duration = press_duration * max(speed, 1e-9)
     if not macro_key_info or not custom_keys:
         return timeline
-        
+
     projected = {}
     if key_assignments and key_groups and key_allowed:
         buckets = {}
@@ -137,7 +146,7 @@ def build_timeline(macro_key_info, custom_keys, press_duration,
             if rebalanced:
                 for idx, key in zip(indexes, mapped):
                     projected[idx] = key
-                    
+
     presses = []
     current_allowed = None
     segment_idx = 0
@@ -167,24 +176,52 @@ def build_timeline(macro_key_info, custom_keys, press_duration,
         hold_ms = key_hold_ms[i] if key_hold_ms is not None else None
         presses.append((key_info['press_time'], key, key_info['is_hold'],
                         key_info['release_time'], hold_ms))
-                        
+
     events = []
-    for press_time, key, is_hold, release_time, hold_ms in presses:
+    # 定義規則角度集合 (0, 90, 180, 270, 360)
+    REGULAR_ANGLES = {0, 90, 180, 270, 360}
+    TOLERANCE = 2.0 # 允許 2 度的誤差
+
+    def is_regular_angle(angle):
+        if angle is None:
+            return True
+        norm_angle = angle % 360
+        for ra in REGULAR_ANGLES:
+            if abs(norm_angle - (ra % 360)) < TOLERANCE:
+                return True
+        return False
+
+    for idx, (press_time, key, is_hold, release_time, hold_ms) in enumerate(presses):
         if is_hold and release_time is not None:
             lift_time = release_time
         elif hold_ms is not None:
             lift_time = press_time + max(1, float(hold_ms))
         else:
             lift_time = press_time + press_duration
-            
-        # ================= 直接寫死 +- 10ms 隨機偏移 =================
-        press_time += random.uniform(-5, 5)
-        lift_time += random.uniform(-5, 5)
+
+        # ================= 核心邏輯：判斷偏移量 =================
+        current_offset = regular_offset_ms # 預設使用正常偏移
         
+        # 1. 檢查是否為雙押/三連音 (multi_count > 1)
+        is_multi_press = False
+        if idx < len(macro_key_info):
+            if macro_key_info[idx].get('multi_count', 1) > 1:
+                is_multi_press = True
+                
+        # 2. 如果不是多押，才去檢查角度是否不規則
+        if not is_multi_press:
+            if angles is not None and idx < len(angles):
+                angle = angles[idx]
+                if not is_regular_angle(angle):
+                    current_offset = irregular_offset_ms
+        # ========================================================
+
+        press_time += random.uniform(-current_offset, current_offset)
+        lift_time += random.uniform(-current_offset, current_offset)
+
         # 保護機制：防止極端情況下抬起時間早於按下時間
         if lift_time <= press_time:
-            lift_time = press_time + 0.4
-        # ============================================================
+            lift_time = press_time + 0.1
 
         events.append((press_time, key, "D"))
         events.append((lift_time, key, "U"))
