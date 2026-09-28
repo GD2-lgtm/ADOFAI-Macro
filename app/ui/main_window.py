@@ -1,11 +1,11 @@
 import os
 import copy
 from PySide6.QtCore import QEvent, QObject, QRegularExpression, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QRegularExpressionValidator, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QRegularExpressionValidator, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox,
-    QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QPushButton, QTextEdit, QVBoxLayout, QWidget, QSpinBox,
 )
 import keyboard
 from colorama import Fore, Style
@@ -141,9 +141,12 @@ class ADOFAIPlayer(QMainWindow):
             )
         )
         
-        # 初始化隨機偏移量
         self.regular_offset_ms = float(self.config.get("regular_offset_ms", 5.0))
         self.irregular_offset_ms = float(self.config.get("irregular_offset_ms", 10.0))
+        
+        self.font_name = self.config.get("font_name", "Microsoft YaHei")
+        self.font_size = int(self.config.get("font_size", 9))
+        self._apply_global_font()
 
         self.key_config_window = None
         self.other_settings_window = None
@@ -243,6 +246,21 @@ class ADOFAIPlayer(QMainWindow):
             self.open_rhythm_hint()
         if self.falling_notes_enabled:
             self.open_falling_notes()
+
+    def _apply_global_font(self):
+        try:
+            font = QFont(self.font_name, self.font_size)
+            if self.font_name in QFontDatabase.families():
+                QApplication.setFont(font)
+        except Exception:
+            pass
+
+    def _on_font_changed(self):
+        self.font_name = self.font_combo.currentText()
+        self.font_size = self.font_size_spin.value()
+        self._apply_global_font()
+        self.config["font_name"] = self.font_name
+        self.config["font_size"] = self.font_size
 
     def _update_log_count(self):
         if self._parse_log_enabled and hasattr(self, "lbl_log_count"):
@@ -457,7 +475,6 @@ class ADOFAIPlayer(QMainWindow):
         row2.addWidget(self.verbose_check)
         control_layout.addLayout(row2)
         
-        # ================= 隨機偏移 UI =================
         row3 = QHBoxLayout()
         row3.setSpacing(8)
         row3.addWidget(QLabel("正常偏移 ±"))
@@ -479,8 +496,32 @@ class ADOFAIPlayer(QMainWindow):
         row3.addWidget(QLabel("ms"))
         row3.addStretch(1)
         control_layout.addLayout(row3)
-        # =====================================================
+
+        row_font = QHBoxLayout()
+        row_font.setSpacing(8)
+        row_font.addWidget(QLabel("界面字体:"))
+        self.font_combo = QComboBox()
+        self.font_combo.addItems(sorted(QFontDatabase.families()))
+        idx = self.font_combo.findText(self.font_name)
+        if idx >= 0:
+            self.font_combo.setCurrentIndex(idx)
+        self.font_combo.setFixedWidth(150)
+        self.font_combo.setToolTip("更改程序界面的显示字体")
+        self.font_combo.currentTextChanged.connect(self._on_font_changed)
+        row_font.addWidget(self.font_combo)
         
+        row_font.addSpacing(10)
+        row_font.addWidget(QLabel("字号:"))
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(8, 20)
+        self.font_size_spin.setValue(self.font_size)
+        self.font_size_spin.setFixedWidth(50)
+        self.font_size_spin.setToolTip("更改程序界面的字体大小")
+        self.font_size_spin.valueChanged.connect(self._on_font_changed)
+        row_font.addWidget(self.font_size_spin)
+        row_font.addStretch(1)
+        control_layout.addLayout(row_font)
+
         main_layout.addWidget(control_box)
         technique_box = QGroupBox("手法模拟")
         technique_layout = QHBoxLayout(technique_box)
@@ -1956,21 +1997,17 @@ class ADOFAIPlayer(QMainWindow):
             if follow_speed:
                 key_hold_ms = [h * speed for h in key_hold_ms]
                 
-        # ================= 核心修改：獲取角度並標記雙押 =================
         angles = None
         if self.adofai_angle is not None:
             angles = self.adofai_angle.getMacroTurnAngles(selected_macro_key_info)
             
-        # 自動標記雙押和三連音 (multi_count > 1)
         if angles and selected_macro_key_info:
             notes_temp = [copy.deepcopy(n) for n in selected_macro_key_info]
             current_bpm = self._chart_bpm()
             limit = track_angle_limit(current_bpm) if current_bpm > 0 else None
             annotate_multi_press(notes_temp, angles=angles, limit=limit)
-            # 將標記結果寫回原始列表，供 timeline.py 使用
             for i in range(len(selected_macro_key_info)):
                 selected_macro_key_info[i]['multi_count'] = notes_temp[i].get('multi_count', 1)
-        # ==========================================================
 
         self.timeline = build_timeline(
             selected_macro_key_info,
@@ -2042,6 +2079,8 @@ class ADOFAIPlayer(QMainWindow):
             "falling_notes_height": int(self.falling_notes_height),
             "regular_offset_ms": self.regular_offset_ms,
             "irregular_offset_ms": self.irregular_offset_ms,
+            "font_name": self.font_name,
+            "font_size": self.font_size,
         }
 
     def export_config_file(self):
@@ -2250,7 +2289,6 @@ class ADOFAIPlayer(QMainWindow):
                 self.falling_notes_width, self.falling_notes_height
             )
             
-        # 新增：讀取隨機偏移配置
         if data.get("regular_offset_ms") is not None:
             self.regular_offset_ms = float(data.get("regular_offset_ms", 5.0))
         if data.get("irregular_offset_ms") is not None:
@@ -2263,7 +2301,25 @@ class ADOFAIPlayer(QMainWindow):
             self.irregular_offset_edit.blockSignals(True)
             self.irregular_offset_edit.setText(str(self.irregular_offset_ms))
             self.irregular_offset_edit.blockSignals(False)
+
+        if data.get("font_name") is not None:
+            self.font_name = str(data.get("font_name", "Microsoft YaHei"))
+        if data.get("font_size") is not None:
+            self.font_size = int(data.get("font_size", 9))
             
+        if hasattr(self, "font_combo"):
+            self.font_combo.blockSignals(True)
+            idx = self.font_combo.findText(self.font_name)
+            if idx >= 0:
+                self.font_combo.setCurrentIndex(idx)
+            self.font_combo.blockSignals(False)
+        if hasattr(self, "font_size_spin"):
+            self.font_size_spin.blockSignals(True)
+            self.font_size_spin.setValue(self.font_size)
+            self.font_size_spin.blockSignals(False)
+            
+        self._apply_global_font()
+
         self.config.update(self._collect_config())
         if self.file_path:
             self.generate_timeline()
@@ -2386,6 +2442,8 @@ class ADOFAIPlayer(QMainWindow):
             falling_notes_height=self.falling_notes_height,
             regular_offset_ms=self.regular_offset_ms,
             irregular_offset_ms=self.irregular_offset_ms,
+            font_name=self.font_name,
+            font_size=self.font_size,
         )
         if reason and not ok:
             self.log_message(f"配置保存失败({reason})", "error")

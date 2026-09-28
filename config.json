@@ -14,11 +14,11 @@
     "y", "u", "i", "o"
   ],
   "hotkey": "insert",
-  "press_duration": 40,
+  "press_duration": 50,
   "technique": {
-    "enabled": false,
+    "enabled": true,
     "style": "内轮",
-    "single_kps": 8.5,
+    "single_kps": 8.0,
     "main_hand": "right",
     "follow_speed": true
   },
@@ -44,5 +44,7 @@
   "falling_notes_multi_fix": true,
   "falling_notes_hit_effect": true,
   "regular_offset_ms": 5.0,
-  "irregular_offset_ms": 10.0
+  "irregular_offset_ms": 15.0,
+  "font_name": "微軟正黑體",
+  "font_size": 10
 }

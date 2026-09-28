@@ -71,6 +71,10 @@ _DEFAULT_CONFIG = {
     "suppress_bound_keys": True,
     "falling_notes_multi_fix": True,
     "falling_notes_hit_effect": True,
+    "regular_offset_ms": 5.0,
+    "irregular_offset_ms": 10.0,
+    "font_name": "Microsoft YaHei",
+    "font_size": 9,
 }
 
 try:
@@ -135,7 +139,8 @@ def save_config(config, *, left_keys, right_keys, macro_hotkey, press_duration,
                 falling_notes_multi_fix=True,
                 rhythm_hint_width=900, falling_notes_width=380,
                 falling_notes_height=820,
-                regular_offset_ms=5.0, irregular_offset_ms=10.0):
+                regular_offset_ms=5.0, irregular_offset_ms=10.0,
+                font_name="Microsoft YaHei", font_size=9):
     try:
         config.pop("death_key", None)
         for key in ("rhythm_hint_multi_threshold", "rhythm_hint_multi_press",
@@ -175,6 +180,8 @@ def save_config(config, *, left_keys, right_keys, macro_hotkey, press_duration,
         config["falling_notes_height"] = int(falling_notes_height)
         config["regular_offset_ms"] = float(regular_offset_ms)
         config["irregular_offset_ms"] = float(irregular_offset_ms)
+        config["font_name"] = str(font_name)
+        config["font_size"] = int(font_size)
         
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             f.write(_dump_config_text(config) + "\n")
