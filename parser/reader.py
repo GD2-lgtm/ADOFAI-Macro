@@ -1,4 +1,5 @@
 import json
+import re
 
 
 class ADOLevelData:
@@ -57,15 +58,33 @@ class ADOLevelData:
         output = output[:-2] + "\n\t]\n}"
         return output
 
+    def _parse_json(self) -> dict:
+        text = self.data
+        if text[:1] == "\ufeff":
+            text = text[1:]
+        parsed = None
+        try:
+            parsed = json.loads(text, strict=False)
+        except Exception:
+            try:
+                parsed = json.loads(re.sub(r",(?=\s*[}\]])", "", text), strict=False)
+            except Exception as exc:
+                self._log("DECODE", f"标准 JSON 解析失败({exc}), 回退到内置解析器")
+                self.index = 0
+                return self.task_object()
+        if not isinstance(parsed, dict):
+            raise ADOLevelData.exception("it not adofai syntax")
+        return parsed
+
     def decode(self) -> None:
         self._log("DECODE", "=" * 60)
         self._log("DECODE", "开始解析谱面文件")
         self._log("DECODE", f"文件总长度: {len(self.data)} 字符")
 
-        if self.data[0] != "{":
+        if not self.data.lstrip("\ufeff \t\r\n").startswith("{"):
             raise ADOLevelData.exception("it not adofai syntax")
 
-        self.result = self.task_object()
+        self.result = self._parse_json()
         self._log("DECODE", f"顶层对象键: {list(self.result.keys())}")
 
         if not "decorations" in self.result:
@@ -74,7 +93,7 @@ class ADOLevelData:
             self.result["actions"] = []
         if "pathData" in self.result:
             self.type = "pathData"
-            self._log("DECODE", f"谱面类型: pathData, 长度: {len(self.result['pathData'])}")
+            self._log("DECODE", f"谱面类型: pathData, 轨道数: {len(self.result['pathData'])}")
         elif "angleData" in self.result:
             self.type = "angleData"
             self._log("DECODE", f"谱面类型: angleData, 轨道数: {len(self.result['angleData'])}")

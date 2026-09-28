@@ -1,16 +1,46 @@
 {
-  "left_keys": [],
-  "right_keys": [],
-  "keys": [],
+  "left_keys": [
+    "f", "d", "s", "a",
+    "r", "e", "w", "q"
+  ],
+  "right_keys": [
+    "h", "j", "k", "l",
+    "y", "u", "i", "o"
+  ],
+  "keys": [
+    "f", "d", "s", "a",
+    "r", "e", "w", "q",
+    "h", "j", "k", "l",
+    "y", "u", "i", "o"
+  ],
   "hotkey": "insert",
-  "press_duration": 19,
-  "random_offset": 0,
+  "press_duration": 40,
   "technique": {
     "enabled": true,
     "style": "内轮",
-    "single_kps": 9.0,
+    "single_kps": 9.5,
     "main_hand": "right",
     "follow_speed": true
   },
-  "verbose": true
+  "verbose": true,
+  "offset_left_key": "left",
+  "offset_right_key": "right",
+  "realtime_offset_enabled": true,
+  "macro_end_mode": "both",
+  "rhythm_hint_enabled": false,
+  "rhythm_hint_speed": 300,
+  "rhythm_hint_division": 8,
+  "rhythm_hint_hit_effect": false,
+  "falling_notes_enabled": false,
+  "falling_notes_speed": 250,
+  "falling_notes_division": 32,
+  "falling_notes_lanes": 8,
+  "rhythm_hint_width": 1110,
+  "falling_notes_width": 310,
+  "falling_notes_height": 739,
+  "rhythm_hint_multi_fix": true,
+  "disable_key_output": false,
+  "suppress_bound_keys": true,
+  "falling_notes_multi_fix": true,
+  "falling_notes_hit_effect": true
 }

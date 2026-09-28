@@ -39,13 +39,14 @@ def map_key_number(key_num, left_keys, right_keys):
 class AdvancedTechnique:
 
     def __init__(self, left_keys, right_keys, single_finger_bpm=400.0,
-                 main_hand="right"):
+                 main_hand="right", default_hold_ms=None):
         self.left_keys = list(left_keys)
         self.right_keys = list(right_keys)
         self.single_finger_bpm = float(single_finger_bpm)
         self.main_hand = main_hand
+        self.default_hold_ms = _DEFAULT_HOLD if default_hold_ms is None else max(1.0, float(default_hold_ms))
 
-    def simulate(self, press_times_ms):
+    def simulate(self, press_times_ms, hold_mask=None):
         n = len(press_times_ms)
         if n == 0:
             return [], []
@@ -53,12 +54,12 @@ class AdvancedTechnique:
         if not self.left_keys or not self.right_keys:
             all_keys = self.left_keys + self.right_keys
             if not all_keys:
-                return [None] * n, [_DEFAULT_HOLD] * n
-            return [all_keys[i % len(all_keys)] for i in range(n)], [_DEFAULT_HOLD] * n
+                return [None] * n, [self.default_hold_ms] * n
+            return [all_keys[i % len(all_keys)] for i in range(n)], [self.default_hold_ms] * n
 
         TIME = [t / 1000.0 for t in press_times_ms]
         press_key = self._build_press_key_numbers(
-            TIME, len(self.left_keys), len(self.right_keys)
+            TIME, len(self.left_keys), len(self.right_keys), hold_mask=hold_mask
         )
         if len(press_key) < n:
             last = press_key[-1] if press_key else 1
@@ -70,7 +71,36 @@ class AdvancedTechnique:
         hold_ms = self._build_hold_ms(press_key, TIME)
         return assignments, hold_ms
 
-    def _build_press_key_numbers(self, TIME, left_size, right_size):
+    def simulate_with_groups(self, press_times_ms, hold_mask=None):
+        assignments, hold_ms = self.simulate(press_times_ms, hold_mask=hold_mask)
+        return assignments, hold_ms, self._build_projection_groups(press_times_ms)
+
+    def _build_projection_groups(self, press_times_ms):
+        n = len(press_times_ms)
+        if n == 0:
+            return []
+        TIME = [t / 1000.0 for t in press_times_ms]
+        thr = 60.0 / (self.single_finger_bpm * 2)
+        group_ids = []
+        i = 0
+        group_sn = 0
+        while i < n:
+            group_sn += 1
+            j = i
+            acc = 0.0
+            while j + 1 < n:
+                gap = TIME[j + 1] - TIME[j]
+                if acc + gap < thr:
+                    acc += gap
+                    j += 1
+                else:
+                    break
+            group_ids.extend([group_sn] * (j - i + 1))
+            i = j + 1
+        return group_ids
+
+
+    def _build_press_key_numbers(self, TIME, left_size, right_size, hold_mask=None):
         n = len(TIME)
         if n < 1:
             return []
@@ -188,11 +218,52 @@ class AdvancedTechnique:
         if group_count > 0:
             flush_group()
 
+        if hold_mask is not None and len(hold_mask) == len(press_key):
+            press_key = self._apply_low_speed_hold_alternation(
+                press_key, TIME, list(hold_mask)
+            )
+        return press_key
+
+    @staticmethod
+    def _is_low_speed_hold_run(TIME, start, end, single_finger_bpm):
+        for i in range(start + 1, end):
+            gap = TIME[i] - TIME[i - 1]
+            if gap <= 0:
+                return False
+            if single_finger_bpm <= 60.0 / gap:
+                return False
+        return True
+
+    def _apply_low_speed_hold_alternation(self, press_key, TIME, hold_mask):
+        n = min(len(press_key), len(TIME), len(hold_mask))
+        if n < 2:
+            return press_key
+
+        main_number = 5 if self.main_hand == "right" else 4
+        off_number = 4 if self.main_hand == "right" else 5
+
+        i = 0
+        while i < n:
+            if not hold_mask[i]:
+                i += 1
+                continue
+
+            end = i
+            while end < n and hold_mask[end]:
+                end += 1
+
+            if (end - i) >= 2 and self._is_low_speed_hold_run(
+                TIME, i, end, self.single_finger_bpm
+            ):
+                for j in range(i, end):
+                    press_key[j] = main_number if (j - i) % 2 == 0 else off_number
+            i = end
+
         return press_key
 
     def _build_hold_ms(self, press_key, TIME):
         n = len(TIME)
-        full_hold = [_DEFAULT_HOLD] * n
+        full_hold = [self.default_hold_ms] * n
         if n == 0:
             return full_hold
 
@@ -208,7 +279,7 @@ class AdvancedTechnique:
 
         kid = [r[0] for r in raw]
         t = [r[1] for r in raw]
-        hold = [_DEFAULT_HOLD] * m
+        hold = [self.default_hold_ms] * m
 
         ns = [-1.0] * m
         last = {}
@@ -231,12 +302,12 @@ class AdvancedTechnique:
             if ns[i] < 0:
                 continue
             gap = ns[i] - t[i]
-            hold[i] = gap * 4.0 / 6.0 if gap * 5.0 / 6.0 < _DEFAULT_HOLD else _DEFAULT_HOLD
+            hold[i] = gap * 4.0 / 6.0 if gap * 5.0 / 6.0 < self.default_hold_ms else self.default_hold_ms
 
         for i in range(m - 1, -1, -1):
             k = kid[i]
             target = target_of(k)
-            h = _DEFAULT_HOLD
+            h = self.default_hold_ms
             if 1 <= target <= _KEY_COUNT and i + 1 < m and kid[i + 1] == target:
                 h = t[i + 1] - t[i] + hold[i + 1]
             hold[i] = h
@@ -245,10 +316,10 @@ class AdvancedTechnique:
             if kid[i] <= 8:
                 continue
             if ns[i] < 0:
-                hold[i] = _DEFAULT_HOLD
+                hold[i] = self.default_hold_ms
                 continue
             gap = ns[i] - t[i]
-            hold[i] = gap * 4.0 / 6.0 if gap * 5.0 / 6.0 < _DEFAULT_HOLD else _DEFAULT_HOLD
+            hold[i] = gap * 4.0 / 6.0 if gap * 5.0 / 6.0 < self.default_hold_ms else self.default_hold_ms
 
         for idx, i in enumerate(range(1, m + 1)):
             if i < n:

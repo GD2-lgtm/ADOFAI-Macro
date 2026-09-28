@@ -1,7 +1,7 @@
 import ctypes
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 _user32 = ctypes.WinDLL('user32', use_last_error=True)
 

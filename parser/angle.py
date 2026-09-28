@@ -30,18 +30,70 @@ class ADOAngle():
         "!": 999.0,
     }
 
+    Angle_Relative_Correspondence = {
+        "t": 60.0,
+        "y": 300.0, 
+        "h": 120.0,
+        "j": -120.0,
+        "5": 72.0,
+        "6": -72.0,
+        "7": 52.0,
+        "8": -52.0,
+        "9": -30.0,
+    }
+
     TWO_PLANET_PAUSE_BEAT_DIFF = -1
     THREE_PLANET_PAUSE_BEAT_DIFF = -1
 
+
+    def _read_angle_data(self, ald: ADOLevelData):
+        angle_data = ald.result.get("angleData")
+        if angle_data:
+            self._log("INIT", f"使用 angleData, 原始长度: {len(angle_data)}")
+            return list(angle_data)
+
+        path_data = ald.result.get("pathData")
+        if not path_data:
+            raise ADOLevelData.exception("谱面里既没有 angleData 也没有 pathData")
+
+        converted = []
+        for index, char in enumerate(path_data):
+            value = self.Angle_Correspondence.get(char)
+            if value is None:
+                offset = self.Angle_Relative_Correspondence.get(char)
+                if offset is not None:
+                    value = (converted[-1] if converted else 0.0) + offset
+                else:
+                    self.pathDataUnknownChars.setdefault(char, []).append(index)
+                    value = converted[-1] if converted else 0.0
+            converted.append(value)
+
+        self._log(
+            "INIT",
+            f"使用 pathData 转换, 原始长度: {len(converted)}, "
+            f"pathData: {path_data[:50]}...",
+        )
+        if self.pathDataUnknownChars:
+            parts = []
+            for char, positions in sorted(self.pathDataUnknownChars.items()):
+                shown = ", ".join(str(p) for p in positions[:8])
+                if len(positions) > 8:
+                    shown += ", ..."
+                parts.append(f"{char!r} x{len(positions)} (下标 {shown})")
+            message = (
+                f"pathData 里有 {len(self.pathDataUnknownChars)} 种角度表外的字符: "
+                + "；".join(parts)
+                + "。这些格子已按「沿用上一格角度(直行)」处理，"
+                "请检查该处谱面。"
+            )
+            self._log("INIT", "警告: " + message)
+            print("[解析警告] " + message)
+        return converted
+
     def __init__(self, ald: ADOLevelData):
         self._logger = None
-        try:
-            self.angleData = ald.result["angleData"]
-            self._log("INIT", f"使用 angleData, 原始长度: {len(self.angleData)}")
-        except KeyError:
-            path_data = ald.result["pathData"]
-            self.angleData = [self.Angle_Correspondence[char] for char in path_data]
-            self._log("INIT", f"使用 pathData 转换, 原始长度: {len(self.angleData)}, pathData: {path_data[:50]}...")
+        self.pathDataUnknownChars = {}
+        self.angleData = self._read_angle_data(ald)
 
         self.floorNum = len(self.angleData)
         self.settings = ald.result['settings']
@@ -68,180 +120,146 @@ class ADOAngle():
         self._log("ROTATE", "开始计算旋转角度")
 
         angleData = self.angleData
-        planetNumList = self.getPlanetNumList()
-        holdList = self.getHoldDict()
+        floorNum = len(angleData)
 
         self._log("ROTATE", f"原始 angleData 前20个: {angleData[:20]}")
         self._log("ROTATE", f"中旋轨道(999)位置: {[i for i, a in enumerate(angleData) if a == 999][:20]}...")
-        self._log("ROTATE", f"行星数变化: {dict(list(planetNumList.items())[:10])}...")
-        self._log("ROTATE", f"长按事件: {dict(list(holdList.items())[:10])}...")
 
-        angleData[:] = [round(angle + 360, 8) if angle <= 0 else round(angle, 8) for angle in angleData]
+        self.angleData[:] = [
+            999.0 if a == 999 else (a + 360.0 if a <= 0 else float(a))
+            for a in angleData
+        ]
+        angleData = self.angleData
         self._log("ROTATE", f"标准化后 angleData 前20个: {angleData[:20]}")
 
-        rotateAngleList = [0]
-        calc_log = []
+        entry = [0.0] * (floorNum + 1)
+        exitAngle = [0.0] * (floorNum + 1)
+        isMidspin = [False] * (floorNum + 1)
+        entry[0] = 270.0  
+        for j in range(floorNum):
+            if angleData[j] == 999:
+                exitAngle[j] = entry[j]
+                isMidspin[j] = True
+            else:
+                exitAngle[j] = (90.0 - angleData[j]) % 360.0
+            entry[j + 1] = (exitAngle[j] + 180.0) % 360.0
+        exitAngle[floorNum] = (entry[floorNum] + 180.0) % 360.0
 
-        for i in range(1, len(angleData)):
-            try:
-                if angleData[i - 1] == 999:
-                    if i in holdList:
-                        midspin_angle = rotateAngleList[i - 1]
-                        rotateAngleList[i - 1] = 999
-                        rotateAngleList.append(midspin_angle + holdList[i])
-                        calc_log.append(f"  floor {i}: midspin+Hold -> angle={midspin_angle + holdList[i]:.6f} (midspin={midspin_angle:.6f} + hold={holdList[i]:.6f}), midspin floor {i-1} removed")
-                    else:
-                        rotateAngleList.append(999)
-                        calc_log.append(f"  floor {i}: prev=999(midspin) -> skip, mark 999")
-                    continue
-                if angleData[i] == 999:
-                    absoluteAngle1 = angleData[i - 1]
-                    absoluteAngle2 = angleData[i + 1]
-                    note = f"midspin(floor {i}): prev={absoluteAngle1}, next={absoluteAngle2}"
-                else:
-                    absoluteAngle1 = angleData[i - 1] + 180
-                    absoluteAngle2 = angleData[i]
-                    note = f"normal(floor {i}): from={absoluteAngle1}({angleData[i-1]}+180), to={absoluteAngle2}"
+        twirlAt = set()
+        planetsAt = {}
+        pauseAt = {}
+        holdAt = {}
+        freeRoamAt = {}
+        for action in self.actions:
+            if not self._is_action_active(action):
+                continue
+            floor = action.get("floor")
+            if not isinstance(floor, int) or floor < 0:
+                continue
+            eventType = action.get("eventType")
+            if eventType == "Twirl":
+                twirlAt.add(floor)
+            elif eventType == "MultiPlanet":
+                planetsAt[floor] = 3 if action.get("planets") == "ThreePlanets" else 2
+            elif eventType == "Pause":
+                try:
+                    pauseAt[floor] = float(action.get("duration", 0.0))
+                except (TypeError, ValueError):
+                    pass
+            elif eventType == "Hold":
+                try:
+                    holdAt[floor] = int(action.get("duration", 0))
+                except (TypeError, ValueError):
+                    pass
+            elif eventType == "FreeRoam":
+                try:
+                    freeRoamAt[floor] = float(action.get("duration", 0.0))
+                except (TypeError, ValueError):
+                    pass
 
-                rotateAngle = (absoluteAngle1 - absoluteAngle2) % 360
-                if rotateAngle < 0.001 or rotateAngle > 359.999:
-                    old = rotateAngle
-                    rotateAngle = 360
-                    calc_log.append(f"  floor {i}: {note}, raw={old:.6f}, clamped to 360")
-                else:
-                    calc_log.append(f"  floor {i}: {note}, angle={rotateAngle:.6f}")
+        def movedDegrees(startAngle, endAngle, clockwise):
+            delta = (endAngle - startAngle) * (1.0 if clockwise else -1.0)
+            return delta % 360.0
 
-                rotateAngleList.append(rotateAngle)
-            except IndexError:
-                absoluteAngle1 = angleData[i - 1] + 180
-                absoluteAngle2 = angleData[i - 1]
-                rotateAngle = (absoluteAngle1 - absoluteAngle2) % 360
-                if rotateAngle < 0.001 or rotateAngle > 359.999:
-                    rotateAngle = 360
-                rotateAngleList.append(rotateAngle)
-                calc_log.append(f"  floor {i}: INDEX ERROR fallback, angle={rotateAngle}")
+        def inverseAnglePerBeat(planets):
+            if planets <= 2:
+                return 0.0
+            return 180.0 * (planets - 2.0) / planets
 
-        self._log("ROTATE", f"基础旋转角度计算完成, 长度: {len(rotateAngleList)}")
-        for line in calc_log[:15]:
+        defaultLength = []
+        for j in range(floorNum):
+            length = movedDegrees(entry[j], exitAngle[j], True)
+            if length <= 1e-6 or length >= 360.0 - 1e-6:
+                length = 0.0 if isMidspin[j] else 360.0
+            defaultLength.append(length)
+
+        rotateAngleList = [999.0] * floorNum
+        ccw = False
+        planetNum = 2
+        calcLog = []
+
+        for j in range(floorNum):
+            if j in twirlAt:
+                ccw = not ccw
+            if j in planetsAt:
+                planetNum = planetsAt[j]
+
+            inverse = inverseAnglePerBeat(planetNum)
+            offset = -inverse if ccw else inverse
+            if isMidspin[j]:
+                offset = 0.0
+            elif j > 0 and isMidspin[j - 1] and planetNum > 2:
+                offset -= (-(360.0 + inverse) if ccw else (360.0 + inverse))
+
+            startAngle = entry[j] + offset
+            endAngle = exitAngle[j] + (offset if isMidspin[j] else 0.0)
+            travel = movedDegrees(startAngle, endAngle, not ccw)
+            if travel <= 1e-6 or travel >= 360.0 - 1e-6:
+                travel = 0.0 if isMidspin[j] else 360.0
+
+            if not isMidspin[j] and j in pauseAt:
+                travel += pauseAt[j] * 180.0
+
+            if j in holdAt and holdAt[j] >= 0:
+                travel += holdAt[j] * 360.0
+
+            if j in freeRoamAt:
+                duration = int(freeRoamAt[j])
+                if duration >= 2:
+                    beats = defaultLength[j] / 180.0
+                    travel += max(beats, duration - beats) * 180.0
+
+            rotateAngleList[j] = travel
+            if j < 12 or (j in pauseAt or j in holdAt):
+                calcLog.append(
+                    f"  floor {j}: angle={angleData[j]}, midspin={isMidspin[j]}, "
+                    f"ccw={ccw}, planets={planetNum}, travel={travel:.6f}, beat={travel / 180.0:.6f}"
+                )
+
+        lastReal = -1
+        for j in range(floorNum):
+            if isMidspin[j]:
+                if lastReal >= 0:
+                    rotateAngleList[lastReal] += rotateAngleList[j]
+                rotateAngleList[j] = 999.0
+            else:
+                lastReal = j
+        for j in range(floorNum):
+            if not isMidspin[j]:
+                rotateAngleList[j] = 0.0
+                break
+
+        self._log("ROTATE", "基础旋转角度计算完成, 长度: %d" % len(rotateAngleList))
+        for line in calcLog[:15]:
             self._log("ROTATE", line)
-        if len(calc_log) > 15:
-            self._log("ROTATE", f"  ... ({len(calc_log)-15} more lines)")
-
-        actions = self.actions
-        _twirlFloorList = []
-        for i in actions:
-            if i['eventType'] == 'Twirl':
-                if not self._is_action_active(i):
-                    continue
-                _twirlFloorList.append(i['floor'])
-        twirlFloorList = []
-        for i in range(0, len(_twirlFloorList), 2):
-            twirlFloorList.append(_twirlFloorList[i: i + 2])
-
-        self._log("ROTATE", f"Twirl事件: raw={_twirlFloorList}, paired={twirlFloorList}")
-
-        hairpinTurnDiff = {}
-        twirl_changes = []
-
-        for i in twirlFloorList:
-            if len(i) == 2:
-                for j in range(i[0], i[1]):
-                    if j < len(rotateAngleList):
-                        old = rotateAngleList[j]
-                        if rotateAngleList[j] < 360:
-                            rotateAngleList[j] = 360 - rotateAngleList[j]
-                        elif rotateAngleList[j] == 360:
-                            hairpinTurnDiff[j] = self.TWO_PLANET_PAUSE_BEAT_DIFF
-                        twirl_changes.append(f"  floor {j}: {old} -> {rotateAngleList[j]} (Twirl range {i[0]}-{i[1]})")
-            if len(i) == 1:
-                for j in range(i[0], len(rotateAngleList)):
-                    if j < len(rotateAngleList):
-                        old = rotateAngleList[j]
-                        if rotateAngleList[j] < 360:
-                            rotateAngleList[j] = 360 - rotateAngleList[j]
-                        twirl_changes.append(f"  floor {j}: {old} -> {rotateAngleList[j]} (Twirl from {i[0]} to end)")
-
-        if twirl_changes:
-            self._log("ROTATE", "Twirl 修改:")
-            for line in twirl_changes[:10]:
-                self._log("ROTATE", line)
-            if len(twirl_changes) > 10:
-                self._log("ROTATE", f"  ... ({len(twirl_changes)-10} more)")
-
-        self._log("ROTATE", "处理三球事件...")
-        lastTileOfThreePlanets = -1
-        planetNumList[self.floorNum] = 2
-        three_planet_log = []
-
-        for i in sorted(planetNumList):
-            if planetNumList[i] == 3 and lastTileOfThreePlanets == -1:
-                lastTileOfThreePlanets = i
-                three_planet_log.append(f"  三球开始于 floor {i}")
-            elif planetNumList[i] == 2 and lastTileOfThreePlanets != -1:
-                three_planet_log.append(f"  三球结束于 floor {i} (范围 {lastTileOfThreePlanets}-{i-1})")
-                for j in range(lastTileOfThreePlanets, i):
-                    if j < len(rotateAngleList):
-                        old = rotateAngleList[j]
-                        if rotateAngleList[j] == 360:
-                            hairpinTurnDiff[j] = self.THREE_PLANET_PAUSE_BEAT_DIFF
-                            three_planet_log.append(f"    floor {j}: marked hairpinTurnDiff")
-                        if j > 0 and rotateAngleList[j] != 999 and rotateAngleList[j - 1] != 999:
-                            rotateAngleList[j] -= 60
-                            if rotateAngleList[j] <= 0:
-                                rotateAngleList[j] += 360
-                            three_planet_log.append(f"    floor {j}: {old} -> {rotateAngleList[j]} (-60)")
-                lastTileOfThreePlanets = -1
-
-        for line in three_planet_log[:15]:
-            self._log("ROTATE", line)
-
-        self._log("ROTATE", "处理长按事件...")
-        hold_log = []
-        for i in holdList:
-            if i < len(rotateAngleList):
-                if i > 0 and angleData[i - 1] == 999:
-                    hold_log.append(f"  floor {i}: {rotateAngleList[i]} -> skip (已在midspin+Hold中处理)")
-                    continue
-                old = rotateAngleList[i]
-                rotateAngleList[i] += holdList[i]
-                hold_log.append(f"  floor {i}: {old} -> {rotateAngleList[i]} (+{holdList[i]})")
-        for line in hold_log[:10]:
-            self._log("ROTATE", line)
-        if len(hold_log) > 10:
-            self._log("ROTATE", f"  ... ({len(hold_log)-10} more)")
-
-        self._log("ROTATE", "处理暂停事件...")
-        pause_log = []
-        for i in actions:
-            if i['eventType'] == 'Pause':
-                if not self._is_action_active(i):
-                    continue
-                if i['floor'] < len(rotateAngleList):
-                    old = rotateAngleList[i['floor']]
-                    rotateAngleList[i['floor']] += i['duration'] * 180
-                    pause_log.append(f"  floor {i['floor']}: {old} -> {rotateAngleList[i['floor']]} (Pause duration={i['duration']})")
-        for line in pause_log[:5]:
-            self._log("ROTATE", line)
-
-        self._log("ROTATE", "处理自由漫游事件...")
-        roam_log = []
-        for i in actions:
-            if i['eventType'] == 'FreeRoam':
-                if not self._is_action_active(i):
-                    continue
-                if i['floor'] < len(rotateAngleList):
-                    old = rotateAngleList[i['floor']]
-                    rotateAngleList[i['floor']] += (i['duration'] - 1) * 180
-                    roam_log.append(f"  floor {i['floor']}: {old} -> {rotateAngleList[i['floor']]} (FreeRoam duration={i['duration']})")
-        for line in roam_log[:5]:
-            self._log("ROTATE", line)
+        if len(calcLog) > 15:
+            self._log("ROTATE", f"  ... ({len(calcLog) - 15} more lines)")
 
         self.originRotateAngleList = rotateAngleList
         self.rotateAngleList = self._removeUselessTiles(rotateAngleList)
 
         self._log("ROTATE", f"最终 rotateAngleList (去999后) 长度: {len(self.rotateAngleList)}")
         self._log("ROTATE", f"前20个: {[round(x, 2) for x in self.rotateAngleList[:20]]}")
-        self._log("ROTATE", f"hairpinTurnDiff: {dict(list(hairpinTurnDiff.items())[:10])}...")
 
         return self.rotateAngleList
 
@@ -442,19 +460,11 @@ class ADOAngle():
         self._log("BEAT", f"前20个: {[round(x, 4) for x in self.beatList[:20]]}")
         return beatList2
 
-    def getAbsBeatList(self, bpm=-1):
-        self._log("ABS_BEAT", "=" * 60)
-        self._log("ABS_BEAT", "开始计算绝对节拍")
-
-        if bpm < 0:
-            bpm = self.settings['bpm']
-        self._log("ABS_BEAT", f"基准 BPM: {bpm}")
-
-        if not hasattr(self, 'originBeatList'):
-            self.getBeatList()
-
-        base_bpm = bpm
-        current_bpm = self.settings['bpm']
+    def _buildSpeedSegments(self, base_bpm=None):
+        if base_bpm is None:
+            base_bpm = self.settings['bpm']
+        if not hasattr(self, 'originRotateAngleList'):
+            self.getRotateAngle()
 
         tile_angles = []
         cum_angle = [0.0]
@@ -464,8 +474,7 @@ class ADOAngle():
             cum_angle.append(cum_angle[-1] + span)
         total_angle = cum_angle[-1]
 
-        self._log("ABS_BEAT", f"总角度: {total_angle:.2f}")
-        self._log("ABS_BEAT", f"累计角度前10个: {[round(x, 2) for x in cum_angle[:11]]}")
+        current_bpm = self.settings['bpm']
 
         speed_events = []
         for action in self.actions:
@@ -510,6 +519,33 @@ class ADOAngle():
 
         for line in seg_log[:15]:
             self._log("ABS_BEAT", line)
+        return segments
+
+    def getAbsBeatList(self, bpm=-1):
+        self._log("ABS_BEAT", "=" * 60)
+        self._log("ABS_BEAT", "开始计算绝对节拍")
+
+        if bpm < 0:
+            bpm = self.settings['bpm']
+        self._log("ABS_BEAT", f"基准 BPM: {bpm}")
+
+        if not hasattr(self, 'originBeatList'):
+            self.getBeatList()
+
+        base_bpm = bpm
+
+        tile_angles = []
+        cum_angle = [0.0]
+        for angle in self.originRotateAngleList:
+            span = 0.0 if angle == 999 else angle
+            tile_angles.append(span)
+            cum_angle.append(cum_angle[-1] + span)
+        total_angle = cum_angle[-1]
+
+        self._log("ABS_BEAT", f"总角度: {total_angle:.2f}")
+        self._log("ABS_BEAT", f"累计角度前10个: {[round(x, 2) for x in cum_angle[:11]]}")
+
+        segments = self._buildSpeedSegments(base_bpm)
 
         beats = [0.0] * len(self.originBeatList)
         detail_log = []
@@ -569,6 +605,31 @@ class ADOAngle():
         self._log("ABS_BEAT", f"前20个: {[round(x, 4) for x in self.absBeatList[:20]]}")
         return absoluteBeatList
 
+    def getBpmTimeline(self):
+        if not hasattr(self, 'pressIntervalList'):
+            self.getPressIntervalList()
+        if not hasattr(self, 'basebpm'):
+            self.basebpm = self.settings['bpm']
+
+        base_bpm = self.basebpm
+        segments = self._buildSpeedSegments(base_bpm)
+        ms_per_beat = 60000.0 / base_bpm if base_bpm > 0 else 0.0
+
+        timeline = []
+        beats = 0.0
+        for start_angle, end_angle, seg_bpm in segments:
+            timeline.append((beats * ms_per_beat, seg_bpm))
+            if seg_bpm > 0:
+                beats += (end_angle - start_angle) / 180.0 * (base_bpm / seg_bpm)
+
+        self.bpmTimeline = timeline
+        self._log("BPM_LIST", "BPM 变化点(时间轴与按键时间一致):")
+        for time_ms, seg_bpm in timeline[:20]:
+            self._log("BPM_LIST", f"  {time_ms:.2f}ms -> BPM={seg_bpm:g}")
+        if len(timeline) > 20:
+            self._log("BPM_LIST", f"  ... (共 {len(timeline)} 段)")
+        return timeline
+
     def getPressIntervalList(self):
         if not hasattr(self, 'absBeatList'):
             self.getAbsBeatList()
@@ -608,6 +669,26 @@ class ADOAngle():
         self._log("CUMULATIVE", f"累计时间列表长度: {len(self.macroCumulativeTimes)}")
         self._log("CUMULATIVE", f"前20个: {[round(x, 2) for x in self.macroCumulativeTimes[:20]]}")
         return cumulative_times
+
+    def getKeyLimiterList(self):
+        result = []
+        for action in self.actions:
+            if action.get('eventType') != 'KeyLimiter':
+                continue
+            if not self._is_action_active(action):
+                continue
+            try:
+                floor = int(action.get('floor', 0))
+                limit = int(action.get('limit', 1))
+            except (TypeError, ValueError):
+                self._log("KEYLIMITER", f"跳过无效 KeyLimiter: {action}")
+                continue
+            if limit <= 0:
+                limit = 1
+            result.append((floor, limit))
+            self._log("KEYLIMITER", f"KeyLimiter @floor={floor}, limit={limit}")
+        result.sort(key=lambda item: item[0])
+        return result
 
     def getMacroKeyInfo(self):
         self._log("KEYINFO", "=" * 60)
@@ -723,6 +804,10 @@ class ADOAngle():
                 'is_hold': False,
             })
             detail_log.append(f"  floor {i}: 普通按键, press={cumulative[i + 1]:.2f} (实际位置floor {actual_floor})")
+
+        for item in key_info_list:
+            raw_idx = item.get('raw_idx')
+            item['floor'] = max(0, new_to_raw.get(raw_idx, raw_idx) - 1)
 
         for line in detail_log:
             self._log("KEYINFO", line)

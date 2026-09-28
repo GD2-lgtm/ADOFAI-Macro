@@ -5,6 +5,24 @@ import win32console
 from colorama import just_fix_windows_console
 
 kernel32 = ctypes.windll.kernel32
+_user32 = ctypes.WinDLL('user32', use_last_error=True)
+
+_GetConsoleWindow = kernel32.GetConsoleWindow
+_GetConsoleWindow.restype = ctypes.c_void_p
+
+_SetWindowPos = _user32.SetWindowPos
+_SetWindowPos.argtypes = (
+    ctypes.c_void_p, ctypes.c_void_p,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    ctypes.c_uint,
+)
+_SetWindowPos.restype = ctypes.c_bool
+
+HWND_TOPMOST = ctypes.c_void_p(-1)
+HWND_NOTOPMOST = ctypes.c_void_p(-2)
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
 
 try:
     freq_counter = ctypes.c_int64()
@@ -25,6 +43,30 @@ def _stdout_is_idle():
     except Exception:
         pass
     return "idlelib" in sys.modules
+
+
+def get_console_window():
+    try:
+        return _GetConsoleWindow()
+    except Exception:
+        return 0
+
+
+def set_always_on_top(enabled):
+    hwnd = get_console_window()
+    if not hwnd:
+        return False
+
+    try:
+        insert_after = HWND_TOPMOST if enabled else HWND_NOTOPMOST
+        result = _SetWindowPos(
+            hwnd, insert_after,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+        return bool(result)
+    except Exception:
+        return False
 
 
 def init():

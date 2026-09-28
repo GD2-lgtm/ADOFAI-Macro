@@ -5,7 +5,6 @@ import keyboard
 
 from .console import PERF_FREQ, get_perf_counter_raw
 from .keys import KeyInjector, resolve_key_codes
-from .timeline import apply_random_offset
 
 
 class PlaybackEngine:
@@ -17,11 +16,12 @@ class PlaybackEngine:
         self._key_codes_cache = {}
         self.is_playing = False
         self.offset_ms = 0.0
-        self.random_offset_ms = 0.0
         self.verbose = True
+        self.key_output_enabled = True
         self.timeline = []
         self.speed = 1.0
         self._thread = None
+        self._start_counter = None
 
         self._keyboard_hooks = []
 
@@ -29,9 +29,22 @@ class PlaybackEngine:
         self.timeline = timeline
         self.speed = speed
 
-    def start(self, verbose, on_stopped=None, random_offset_ms=0.0):
+    def chart_position_ms(self):
+        if not self.is_playing or self._start_counter is None:
+            return None
+        try:
+            elapsed_ms = (
+                (get_perf_counter_raw() - self._start_counter)
+                * 1000.0
+                / PERF_FREQ
+            )
+        except Exception:
+            return None
+        return (elapsed_ms - self.offset_ms) * self.speed
+
+    def start(self, verbose, on_stopped=None):
         self.verbose = verbose
-        self.random_offset_ms = max(0.0, float(random_offset_ms or 0))
+        self._start_counter = None
         self.is_playing = True
         self._thread = threading.Thread(
             target=self._run,
@@ -72,37 +85,106 @@ class PlaybackEngine:
             codes = self._key_codes_cache[key] = resolve_key_codes(key)
         return codes
 
-    def release_all_keys(self, keys=None):
-        keys = keys if keys is not None else self.keys
+    def _release_keys(self, keys):
+        codes = []
         for key in keys:
             try:
-                code = self._key_to_codes(key)[0]
-                if not self.injector.send([self.injector.input_for(code, keyup=True)]):
-                    keyboard.release(code)
+                codes.append(self._key_to_codes(key)[0])
             except Exception:
-                try:
-                    keyboard.release(self._key_to_codes(key)[0])
-                except Exception:
-                    pass
+                pass
+        inputs = []
+        for code in codes:
+            try:
+                inputs.append(self.injector.input_for(code, keyup=True))
+            except Exception:
+                pass
+        if inputs:
+            try:
+                if not self.injector.send(inputs):
+                    for code in codes:
+                        try:
+                            keyboard.release(code)
+                        except Exception:
+                            pass
+            except Exception:
+                for code in codes:
+                    try:
+                        keyboard.release(code)
+                    except Exception:
+                        pass
         self._held_keys.clear()
 
+    def release_all_keys(self, keys=None):
+        if keys is None:
+            keys = list(self._held_keys)
+            keys.extend(key for key in self.keys if key not in self._held_keys)
+        self._release_keys(keys)
+
+    def release_held_keys(self):
+        self._release_keys(tuple(self._held_keys))
+
     def _run(self, on_stopped):
+        self._run_loop(on_stopped=on_stopped)
+
+    @staticmethod
+    def _send_status(status, message):
+        if status is None:
+            return
+        try:
+            status.send(message)
+        except Exception:
+            pass
+
+    def _poll_control(self, control):
+        if control is None:
+            return not self.is_playing
+        try:
+            while control.poll():
+                message = control.recv()
+                if not message:
+                    continue
+                kind = message[0]
+                if kind == "stop":
+                    self.is_playing = False
+                    break
+                if kind == "offset":
+                    try:
+                        self.offset_ms = float(message[1])
+                    except (TypeError, ValueError, IndexError):
+                        pass
+                elif kind == "key_output_enabled":
+                    try:
+                        self.key_output_enabled = bool(message[1])
+                    except IndexError:
+                        pass
+                elif kind == "keys":
+                    try:
+                        self.keys = list(message[1])
+                    except (TypeError, IndexError):
+                        pass
+                elif kind == "release_all":
+                    self.release_all_keys()
+        except (EOFError, OSError):
+            self.is_playing = False
+        return not self.is_playing
+
+    def _run_loop(self, on_stopped=None, control=None, status=None, verbose=None):
+        if verbose is not None:
+            self.verbose = verbose
         self.log_message("=== Macro 开始 ===", "system")
         try:
             self.release_all_keys()
-            speed = self.speed
+            speed = self.speed if self.speed else 1.0
             ms_per_counter = 1000.0 / PERF_FREQ
             counter_per_ms = PERF_FREQ / 1000.0
             margin_counter = 5.0 * counter_per_ms
             min_sleep_counter = 3.0 * counter_per_ms
             start_counter = get_perf_counter_raw()
-
-            timeline = apply_random_offset(self.timeline, self.random_offset_ms)
-            if self.random_offset_ms > 0:
-                self.log_message(f"随机偏移: ±{self.random_offset_ms:.0f}ms", "system")
+            self._start_counter = start_counter
+            self._send_status(status, ("started", start_counter))
 
             groups = []
-            for event_time, key, action in timeline:
+            for event_time, key, action in self.timeline:
                 base = start_counter + (event_time / speed) * counter_per_ms
                 if groups and groups[-1][0] == base:
                     groups[-1][1].append((key, action))
@@ -112,17 +194,25 @@ class PlaybackEngine:
             est_counter = 2.0 * counter_per_ms
 
             for base, actions in groups:
-                if not self.is_playing:
+                if self._poll_control(control):
                     break
 
                 while True:
+                    if self._poll_control(control):
+                        break
                     current = get_perf_counter_raw()
                     target = base + self.offset_ms * counter_per_ms
                     wait = target - current
                     if wait <= est_counter:
                         break
                     if wait > margin_counter + min_sleep_counter:
-                        time.sleep((wait - margin_counter) * ms_per_counter / 1000.0)
+                        sleep_ms = (wait - margin_counter) * ms_per_counter / 1000.0
+                        if control is not None:
+                            sleep_ms = min(max(sleep_ms, 0.001), 0.02)
+                        time.sleep(sleep_ms)
+
+                if not self.is_playing:
+                    break
 
                 inputs = []
                 for key, action in actions:
@@ -138,7 +228,10 @@ class PlaybackEngine:
                         self._held_keys.discard(key)
 
                 t0 = get_perf_counter_raw()
-                ok = self.injector.send(inputs)
+                if self.key_output_enabled:
+                    ok = self.injector.send(inputs)
+                else:
+                    ok = True
                 t1 = get_perf_counter_raw()
                 est_counter = est_counter * 0.9 + (t1 - t0) * 0.1
 
@@ -170,5 +263,6 @@ class PlaybackEngine:
         finally:
             self.release_all_keys()
             self.is_playing = False
+            self._send_status(status, ("stopped",))
             if on_stopped:
                 on_stopped()
