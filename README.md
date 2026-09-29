@@ -64,7 +64,7 @@ AMacro/
      ├── hotkey.py         方向键钩子
      ├── playback.py       按键播放引擎
      ├── technique.py      手法模拟
-     ├── timeline.py       按键时间轴生成 (含智能偏移逻辑)
+     ├── timeline.py       按键时间轴生成 (含随机偏移逻辑)
      └── ui/
          ├── main_window.py         主窗口
          ├── key_config_window.py   按键配置窗口
@@ -107,6 +107,8 @@ AMacro/
 | `falling_notes_hit_effect`                     | 下落式是否显示判定特效（默认`false`）                          |
 | `rhythm_hint_width`                            | 节奏提示窗口宽度（默认`900`；高度固定为 150，宽度可拖动调整）  |
 | `falling_notes_width` / `falling_notes_height` | 下落式窗口分辨率（默认`380` / `820`，宽高都可拖动调整）        |
+| `regular_offset_ms`                            | 正常偏移量 (ms)：规则角度及多押/三连音的随机偏移范围，默认`5.0` |
+| `irregular_offset_ms`                          | 不规则偏移量 (ms)：不规则角度的随机偏移范围，默认`10.0`       |
 
 配置可通过菜单「文件 → 导入/导出配置」保存与导入
 
