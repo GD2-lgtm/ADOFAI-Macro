@@ -49,29 +49,29 @@ pythonw main.py
 
 ```
 AMacro/
-├── main.py               程序入口
-├── config.json           用户配置
-├── README.md             项目说明
-├── .gitignore            Git 忽略规则
-├── parser/               谱面解析
-│   ├── reader.py         .adofai 文件解码
-│   └── angle.py          角度/节拍/按键时间计算
-└── app/                  应用逻辑
-    ├── config.py         配置读写
-    ├── console.py        控制台
-    ├── constants.py      常量
-    ├── keys.py           键名解析与 SendInput 注入
-    ├── hotkey.py         方向键钩子
-    ├── playback.py       按键播放引擎
-    ├── technique.py      手法模拟
-    ├── timeline.py       按键时间轴生成
-    └── ui/
-        ├── main_window.py         主窗口
-        ├── key_config_window.py   按键配置窗口
-        ├── other_settings_window.py 其他设置窗口
-        ├── rhythm_hint_window.py  节奏提示窗口
-        ├── falling_notes_window.py 下落式窗口
-        └── bind_window.py         按键绑定窗口
+ ├── main.py               程序入口
+ ├── config.json           用户配置
+ ├── README.md             项目说明
+ ├── .gitignore            Git 忽略规则
+ ├── parser/               谱面解析
+ │   ├── reader.py         .adofai 文件解码
+ │   └── angle.py          角度/节拍/按键时间计算
+ └── app/                  应用逻辑
+     ├── config.py         配置读写
+     ├── console.py        控制台
+     ├── constants.py      常量
+     ├── keys.py           键名解析与 SendInput 注入
+     ├── hotkey.py         方向键钩子
+     ├── playback.py       按键播放引擎
+     ├── technique.py      手法模拟
+     ├── timeline.py       按键时间轴生成 (含智能偏移逻辑)
+     └── ui/
+         ├── main_window.py         主窗口
+         ├── key_config_window.py   按键配置窗口
+         ├── other_settings_window.py 其他设置窗口
+         ├── rhythm_hint_window.py  节奏提示窗口
+         ├── falling_notes_window.py 下落式窗口
+         └── bind_window.py         按键绑定窗口
 ```
 
 ## 配置说明（config.json）
