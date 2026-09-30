@@ -524,27 +524,30 @@ class ADOFAIPlayer(QMainWindow):
 
         main_layout.addWidget(control_box)
         technique_box = QGroupBox("手法模拟")
-        technique_layout = QHBoxLayout(technique_box)
-        technique_layout.setSpacing(10)
+        self.technique_layout = QHBoxLayout(technique_box)
+        self.technique_layout.setSpacing(10)
         self.technique_check = QCheckBox("启用手法模拟")
         self.technique_check.setChecked(self.technique_enabled)
         self.technique_check.setToolTip("用拟人双手多指手法分配按键(内轮 V3.3)")
-        self.technique_check.toggled.connect(self._on_speed_changed)
-        technique_layout.addWidget(self.technique_check)
-        technique_layout.addWidget(QLabel("风格:"))
+        self.technique_check.toggled.connect(self._on_technique_toggled)
+        self.technique_layout.addWidget(self.technique_check)
+        
+        self.technique_layout.addWidget(QLabel("风格:"))
         self.technique_style_combo = QComboBox()
         self.technique_style_combo.addItems(STYLE_NAMES)
         self.technique_style_combo.setCurrentText(self.technique_style)
         self.technique_style_combo.setFixedWidth(90)
-        technique_layout.addWidget(self.technique_style_combo)
-        technique_layout.addWidget(QLabel("单指KPS:"))
+        self.technique_layout.addWidget(self.technique_style_combo)
+        
+        self.technique_layout.addWidget(QLabel("单指KPS:"))
         self.single_kps_edit = QLineEdit(str(self.technique_single_kps))
         self.single_kps_edit.setValidator(self._make_validator(r"\d*\.?\d*"))
         self.single_kps_edit.setFixedWidth(55)
         self.single_kps_edit.setToolTip("单手单指可达到的按键速度(次/秒),决定轮指阈值")
         self.single_kps_edit.editingFinished.connect(self._on_speed_changed)
-        technique_layout.addWidget(self.single_kps_edit)
-        technique_layout.addWidget(QLabel("主手:"))
+        self.technique_layout.addWidget(self.single_kps_edit)
+        
+        self.technique_layout.addWidget(QLabel("主手:"))
         self.main_hand_combo = QComboBox()
         self.main_hand_combo.addItems(["右手", "左手"])
         self.main_hand_combo.setCurrentText(
@@ -552,7 +555,8 @@ class ADOFAIPlayer(QMainWindow):
         )
         self.main_hand_combo.setFixedWidth(70)
         self.main_hand_combo.currentIndexChanged.connect(self._on_speed_changed)
-        technique_layout.addWidget(self.main_hand_combo)
+        self.technique_layout.addWidget(self.main_hand_combo)
+        
         self.technique_follow_speed_check = QCheckBox("根据倍速进行解析")
         self.technique_follow_speed_check.setChecked(self.technique_follow_speed)
         self.technique_follow_speed_check.setToolTip(
@@ -561,9 +565,14 @@ class ADOFAIPlayer(QMainWindow):
             "不勾选则始终按 1x 原速解析"
         )
         self.technique_follow_speed_check.toggled.connect(self._on_speed_changed)
-        technique_layout.addWidget(self.technique_follow_speed_check)
-        technique_layout.addStretch(1)
+        self.technique_layout.addWidget(self.technique_follow_speed_check)
+        self.technique_layout.addStretch(1)
+        
         main_layout.addWidget(technique_box)
+        
+        # 初始化时更新一次置灰状态
+        self._update_technique_controls_state(self.technique_enabled)
+
         if self._parse_log_enabled:
             log_box = QGroupBox("谱面解析日志")
             log_layout = QHBoxLayout(log_box)
@@ -1913,6 +1922,19 @@ class ADOFAIPlayer(QMainWindow):
         speed = self._bpm_value(self.speed_edit, 1.0)
         self.playback.preload_timeline(self.timeline, speed)
 
+    def _on_technique_toggled(self, checked):
+        """当勾选/取消勾选启用手法模拟时触发"""
+        self._update_technique_controls_state(checked)
+        self._on_speed_changed()
+
+    def _update_technique_controls_state(self, enabled):
+        """根据开关状态，自动置灰或启用手法模拟下方的控件"""
+        for i in range(self.technique_layout.count()):
+            widget = self.technique_layout.itemAt(i).widget()
+            # 排除开关按钮本身，其余控件随开关状态启用/禁用
+            if widget and widget != self.technique_check:
+                widget.setEnabled(enabled)
+
     def _selected_key_limits(self, infos):
         if not infos or self.adofai_angle is None:
             return None
@@ -2221,6 +2243,10 @@ class ADOFAIPlayer(QMainWindow):
             hand = tech.get("main_hand", self.technique_main_hand)
             self.main_hand_combo.setCurrentText("右手" if hand in ("right", "右手") else "左手")
             self.technique_follow_speed_check.setChecked(bool(tech.get("follow_speed", True)))
+        
+        # 在这里补充一行：当导入配置时，同步更新界面置灰状态
+        self._update_technique_controls_state(self.technique_check.isChecked())
+
         if isinstance(data.get("verbose"), bool):
             self.verbose_check.setChecked(data["verbose"])
         if data.get("rhythm_hint_speed") is not None:
