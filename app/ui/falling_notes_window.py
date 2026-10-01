@@ -8,6 +8,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
 from ..multipress import annotate_multi_press, track_angle_limit
+from .. import i18n
 
 
 LANE_CHOICES = (4, 8)
@@ -83,7 +84,10 @@ class _FallingNotesCanvas(QWidget):
         self._effects = []
         self._hit_events = []
         self._hit_index = 0
-        self.placeholder = "未加载谱面"
+
+    @property
+    def placeholder(self):
+        return i18n.tr("canvas.placeholder")
 
     def set_lanes(self, lanes):
         try:
@@ -773,7 +777,7 @@ class FallingNotesWindow(QDialog):
     def __init__(self, player, size=None):
         super().__init__(None)
         self.player = player
-        self.setWindowTitle("下落式")
+        i18n.title(self, "window.falling_notes")
         self.setModal(False)
         self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self.resize(*self._clamp_size(size))

@@ -1,4 +1,5 @@
 from .reader import ADOLevelData
+from app.i18n import tr
 
 class ADOAngle():
     Angle_Correspondence = {
@@ -22,7 +23,7 @@ class ADOAngle():
             return list(angle_data)
         path_data = ald.result.get("pathData")
         if not path_data:
-            raise ADOLevelData.exception("谱面里既没有 angleData 也没有 pathData")
+            raise ADOLevelData.exception(tr("parse.no_angle_data"))
         converted = []
         for index, char in enumerate(path_data):
             value = self.Angle_Correspondence.get(char)
@@ -41,14 +42,14 @@ class ADOAngle():
                 shown = ", ".join(str(p) for p in positions[:8])
                 if len(positions) > 8:
                     shown += ", ..."
-                parts.append(f"{char!r} x{len(positions)} (下标 {shown})")
-            message = (
-                f"pathData 里有 {len(self.pathDataUnknownChars)} 种角度表外的字符: "
-                + "；".join(parts)
-                + "。这些格子已按「沿用上一格角度(直行)」处理，请检查该处谱面。"
+                parts.append(f"{char!r} x{len(positions)} ({shown})")
+            message = tr(
+                "parse.path_unknown_chars",
+                count=len(self.pathDataUnknownChars),
+                details="; ".join(parts),
             )
-            self._log("INIT", "警告: " + message)
-            print("[解析警告] " + message)
+            self._log("INIT", message)
+            print(tr("parse.warning_prefix") + message)
         return converted
 
     def __init__(self, ald: ADOLevelData):

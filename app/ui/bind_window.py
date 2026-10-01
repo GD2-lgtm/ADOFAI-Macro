@@ -3,6 +3,8 @@ import ctypes
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
+from .. import i18n
+
 _user32 = ctypes.WinDLL('user32', use_last_error=True)
 
 
@@ -109,7 +111,8 @@ class BindWindow(QDialog):
 
         layout = QVBoxLayout(self)
 
-        self.label = QLabel("请按下需要绑定的按键")
+        self.label = QLabel()
+        i18n.text(self.label, "bind.prompt")
         self.label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.label)
 
@@ -147,7 +150,8 @@ class BindWindow(QDialog):
         if name is None:
             return
 
-        self.label.setText(f"是否绑定 [{name}]？")
+        # The window is modal, so the language cannot change while it is open.
+        self.label.setText(i18n.tr("bind.confirm", name=name))
 
         while self.btn_layout.count():
             item = self.btn_layout.takeAt(0)
@@ -155,9 +159,11 @@ class BindWindow(QDialog):
             if widget is not None:
                 widget.deleteLater()
 
-        ok_btn = QPushButton("确定")
+        ok_btn = QPushButton()
+        i18n.text(ok_btn, "common.ok")
         ok_btn.clicked.connect(lambda: self.finish_bind(name))
-        cancel_btn = QPushButton("取消")
+        cancel_btn = QPushButton()
+        i18n.text(cancel_btn, "common.cancel")
         cancel_btn.clicked.connect(self.reject)
         self.btn_layout.addWidget(ok_btn)
         self.btn_layout.addStretch(1)

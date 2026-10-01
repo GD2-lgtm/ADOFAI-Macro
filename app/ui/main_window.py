@@ -1,17 +1,21 @@
 import os
 import copy
 from PySide6.QtCore import QEvent, QObject, QRegularExpression, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QRegularExpressionValidator, QTextCharFormat, QTextCursor
+from PySide6.QtGui import (
+    QAction, QActionGroup, QColor, QFont, QFontDatabase,
+    QRegularExpressionValidator, QTextCharFormat, QTextCursor,
+)
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox,
-    QPushButton, QTextEdit, QVBoxLayout, QWidget, QSpinBox,
+    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
+    QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget, QSpinBox,
 )
 import keyboard
 from colorama import Fore, Style
 from parser import ADOAngle, ADOLevelData
 from .. import config as config_module
 from .. import console
+from .. import i18n
 from ..constants import COLOR_MAP, DEFAULT_KEYS
 from ..hotkey import DirectionHook, bound_control_keys
 from ..multipress import annotate_multi_press, track_angle_limit
@@ -24,22 +28,27 @@ from .focus_filter import FocusClearFilter
 from .key_config_window import KeyConfigWindow
 from .other_settings_window import OtherSettingsWindow
 from .rhythm_hint_window import RhythmHintWindow
+from . import sizing
 
 APP_QSS = """
 QMainWindow { background: #f0f2f5; }
+QDialog { background: #f0f2f5; }
 QMenuBar { background: #ffffff; color: #263238; border-bottom: 1px solid #d8dce3; }
 QMenuBar::item { padding: 5px 12px; background: transparent; color: #263238; }
 QMenuBar::item:selected { background: #e3edf7; color: #0b57d0; border-radius: 4px; }
 QMenu { background: #ffffff; color: #263238; border: 1px solid #d8dce3; padding: 4px; }
 QMenu::item { padding: 5px 24px 5px 12px; border-radius: 4px; color: #263238; }
 QMenu::item:selected { background: #e3edf7; color: #0b57d0; }
+QMenu::separator { height: 1px; background: #e2e6ec; margin: 4px 8px; }
 QLabel, QCheckBox { color: #263238; }
+QLabel#fieldLabel { color: #44505e; }
+QLabel#hintLabel { color: #7a8694; }
 QGroupBox {
     background: #ffffff;
     border: 1px solid #d8dce3;
     border-radius: 8px;
     margin-top: 12px;
-    padding: 14px 10px 8px 10px;
+    padding: 14px 12px 10px 12px;
     font-weight: 600;
     color: #33404f;
 }
@@ -75,12 +84,15 @@ DEFAULT_RHYTHM_HINT_DIVISION = 4
 FALLING_NOTES_LANES = (4, 8)
 DEFAULT_FALLING_NOTES_LANES = 4
 
-def _falling_notes_lanes_text(lanes):
-    try:
-        value = int(lanes)
-    except (TypeError, ValueError):
-        value = DEFAULT_FALLING_NOTES_LANES
-    return "8(16)K" if value == 8 else f"{value}K"
+# --- shared layout metrics -------------------------------------------------
+# Keeping the number fields and the label column at a fixed width makes every
+# box line up on the same vertical grid, in both languages.
+FIELD_WIDTH = 58
+FIELD_WIDTH_WIDE = 76
+LABEL_MIN_WIDTH = 72
+VALUE_MIN_WIDTH = 76
+ROW_SPACING = 8
+COL_SPACING = 14
 
 WINDOW_SIZE_LIMIT = 4000
 
@@ -103,7 +115,9 @@ class ADOFAIPlayer(QMainWindow):
     def __init__(self, enable_parse_log=False):
         super().__init__()
         self._parse_log_enabled = enable_parse_log
-        self.setWindowTitle("ADOFAI Macro")
+        self.config = config_module.load_config()
+        i18n.set_language(self.config.get("language"))
+        i18n.title(self, "app.title")
         self.setAcceptDrops(True)
 
         self._focus_manager = FocusClearFilter(self)
@@ -118,7 +132,6 @@ class ADOFAIPlayer(QMainWindow):
         self._debounce_timer.timeout.connect(self._reset_debounce)
         self.events.debounce_schedule.connect(self._start_debounce_timer)
 
-        self.config = config_module.load_config()
         left = self.config.get("left_keys")
         right = self.config.get("right_keys")
         if left is None or right is None:
@@ -218,6 +231,7 @@ class ADOFAIPlayer(QMainWindow):
         self.parse_logs = []
         self.playback = PlaybackEngine(self.log_message)
         self.playback.key_output_enabled = not self.disable_key_output
+        self.playback.language = i18n.get_language()
         self._sync_custom_keys()
         tech = self.config.get("technique")
         self.technique_enabled = tech.get("enabled", False) if isinstance(tech, dict) else bool(tech)
@@ -264,7 +278,9 @@ class ADOFAIPlayer(QMainWindow):
 
     def _update_log_count(self):
         if self._parse_log_enabled and hasattr(self, "lbl_log_count"):
-            self.lbl_log_count.setText(f"日志: {len(self.parse_logs)} 条")
+            self.lbl_log_count.setText(
+                i18n.tr("logbox.count", count=len(self.parse_logs))
+            )
 
     def _parse_logger(self, tag, message):
         if not self._parse_log_enabled:
@@ -275,25 +291,31 @@ class ADOFAIPlayer(QMainWindow):
 
     def save_parse_logs(self):
         if not self.parse_logs:
-            QMessageBox.information(self, "提示", "没有可保存的日志")
+            QMessageBox.information(
+                self, i18n.tr("dialog.info"), i18n.tr("logbox.no_logs")
+            )
             return
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "保存谱面解析日志",
+            i18n.tr("logbox.save_dialog"),
             f"adofai_parse_log_{os.path.basename(self.file_path) if self.file_path else 'unknown'}.txt",
-            "文本文件 (*.txt);;所有文件 (*.*)",
+            i18n.tr("filter.text"),
         )
         if file_path:
             try:
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write("\n".join(self.parse_logs))
-                self.log_message(f"日志已保存: {file_path}", "system")
+                self.log_message(
+                    i18n.tr("logbox.saved", path=file_path), "system"
+                )
             except Exception as e:
-                self.log_message(f"保存日志失败: {e}", "error")
+                self.log_message(
+                    i18n.tr("logbox.save_failed", error=e), "error"
+                )
 
     def show_parse_logs(self):
         win = QDialog(self)
-        win.setWindowTitle("谱面解析日志")
+        i18n.title(win, "logbox.window")
         win.resize(900, 700)
         self._apply_window_flag(win, self.window_on_top)
         layout = QVBoxLayout(win)
@@ -302,9 +324,11 @@ class ADOFAIPlayer(QMainWindow):
         text.setFont(QFont("Consolas", 9))
         layout.addWidget(text)
         btn_layout = QHBoxLayout()
-        btn_save = QPushButton("保存到文件")
+        btn_save = QPushButton()
+        i18n.text(btn_save, "logbox.save_to_file")
         btn_save.clicked.connect(self.save_parse_logs)
-        btn_close = QPushButton("关闭")
+        btn_close = QPushButton()
+        i18n.text(btn_close, "common.close")
         btn_close.clicked.connect(win.close)
         btn_layout.addWidget(btn_save)
         btn_layout.addStretch(1)
@@ -328,32 +352,95 @@ class ADOFAIPlayer(QMainWindow):
 
     def _create_menu_bar(self):
         menubar = self.menuBar()
-        file_menu = menubar.addMenu("文件(&F)")
-        act_open = QAction("加载谱面...", self)
+        self.file_menu = menubar.addMenu(i18n.tr("menu.file"))
+        i18n.on_retranslate(
+            self.file_menu, lambda m: m.setTitle(i18n.tr("menu.file"))
+        )
+        act_open = QAction(self)
+        i18n.text(act_open, "menu.load_chart")
         act_open.setShortcut("Ctrl+O")
         act_open.triggered.connect(self.select_file)
-        file_menu.addAction(act_open)
-        file_menu.addSeparator()
-        act_import = QAction("导入配置...", self)
+        self.file_menu.addAction(act_open)
+        self.file_menu.addSeparator()
+        act_import = QAction(self)
+        i18n.text(act_import, "menu.import_config")
         act_import.triggered.connect(self.import_config_file)
-        file_menu.addAction(act_import)
-        act_export = QAction("导出配置...", self)
+        self.file_menu.addAction(act_import)
+        act_export = QAction(self)
+        i18n.text(act_export, "menu.export_config")
         act_export.triggered.connect(self.export_config_file)
-        file_menu.addAction(act_export)
-        file_menu.addSeparator()
-        act_quit = QAction("退出", self)
+        self.file_menu.addAction(act_export)
+        self.file_menu.addSeparator()
+        act_quit = QAction(self)
+        i18n.text(act_quit, "menu.quit")
         act_quit.setShortcut("Ctrl+Q")
         act_quit.triggered.connect(self.close)
-        file_menu.addAction(act_quit)
-        act_other_settings = QAction("其他设置", self)
-        act_other_settings.setToolTip("打开其他设置窗口")
+        self.file_menu.addAction(act_quit)
+
+        act_other_settings = QAction(self)
+        i18n.text(act_other_settings, "menu.other_settings")
+        i18n.tip(act_other_settings, "menu.other_settings.tip")
         act_other_settings.triggered.connect(self.open_other_settings)
         menubar.addAction(act_other_settings)
-        self.act_window_on_top = QAction("窗口置顶：关", self)
+
+        self.act_window_on_top = QAction(self)
         self.act_window_on_top.setCheckable(True)
-        self.act_window_on_top.setToolTip("切换程序所有窗口的窗口置顶状态")
+        i18n.tip(self.act_window_on_top, "menu.window_on_top.tip")
         self.act_window_on_top.toggled.connect(self._on_window_on_top_toggled)
         menubar.addAction(self.act_window_on_top)
+
+        self.language_menu = menubar.addMenu(i18n.tr("menu.language"))
+        i18n.on_retranslate(
+            self.language_menu, lambda m: m.setTitle(i18n.tr("menu.language"))
+        )
+        i18n.tip(self.language_menu.menuAction(), "menu.language.tip")
+        self._language_actions = {}
+        language_group = QActionGroup(self)
+        language_group.setExclusive(True)
+        for code in i18n.SUPPORTED_LANGUAGES:
+            action = QAction(i18n.LANGUAGE_LABELS[code], self)
+            action.setCheckable(True)
+            action.setChecked(code == i18n.get_language())
+            action.triggered.connect(
+                lambda _checked=False, c=code: self.set_language(c)
+            )
+            language_group.addAction(action)
+            self.language_menu.addAction(action)
+            self._language_actions[code] = action
+        self._language_group = language_group
+
+        self._update_window_on_top_action()
+
+    def set_language(self, code):
+        """Switch the interface language and refresh every open window."""
+        if not i18n.set_language(code):
+            return
+        i18n.retranslate_all()
+        self.config["language"] = i18n.get_language()
+        self.playback.language = i18n.get_language()
+        action = getattr(self, "_language_actions", {}).get(i18n.get_language())
+        if action is not None:
+            action.setChecked(True)
+        self._update_window_on_top_action()
+        self._retranslate_dynamic()
+        for window in self._all_app_windows()[1:]:
+            refit = getattr(window, "refit_to_content", None)
+            if callable(refit):
+                refit()
+        self._fit_window_to_content(grow_only=True)
+        self._save_config_file()
+
+    def _retranslate_dynamic(self):
+        """Refresh the few texts that are not owned by a single widget."""
+        self._update_log_count()
+        self._update_window_on_top_action()
+        self._update_offset_display(self.playback.offset_ms)
+        if hasattr(self, "lbl_file") and not self.file_path:
+            self.lbl_file.setText(i18n.tr("file.none"))
+        state = getattr(self, "_status_state", None)
+        if state:
+            key, color, fmt = state
+            self._set_status_key(key, color, **fmt)
 
     def _all_app_windows(self):
         windows = [self]
@@ -385,7 +472,7 @@ class ADOFAIPlayer(QMainWindow):
                 window.show()
                 window.raise_()
         except Exception as e:
-            self.log_message(f"设置窗口置顶失败: {e}", "error")
+            self.log_message(i18n.tr("log.window_on_top_failed", error=e), "error")
 
     def _apply_window_on_top_to_all(self):
         console.set_always_on_top(self.window_on_top)
@@ -397,7 +484,10 @@ class ADOFAIPlayer(QMainWindow):
             return
         self.act_window_on_top.blockSignals(True)
         self.act_window_on_top.setChecked(self.window_on_top)
-        self.act_window_on_top.setText("窗口置顶：开" if self.window_on_top else "窗口置顶：关")
+        self.act_window_on_top.setText(i18n.tr(
+            "menu.window_on_top",
+            state=i18n.tr("state.on" if self.window_on_top else "state.off"),
+        ))
         self.act_window_on_top.blockSignals(False)
 
     def _on_window_on_top_toggled(self, checked):
@@ -405,29 +495,69 @@ class ADOFAIPlayer(QMainWindow):
         self._apply_window_on_top_to_all()
         self._update_window_on_top_action()
 
+    # ------------------------------------------------------------ ui helpers
+    @staticmethod
+    def _field_label(key, minimum=LABEL_MIN_WIDTH):
+        label = QLabel()
+        i18n.text(label, key)
+        label.setObjectName("fieldLabel")
+        if minimum:
+            label.setMinimumWidth(minimum)
+        return label
+
+    def _field(self, key, widget, unit_key=None, minimum=LABEL_MIN_WIDTH):
+        """Pack ``label + widget [+ unit]`` into one aligned grid cell."""
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        row.addWidget(self._field_label(key, minimum))
+        row.addWidget(widget)
+        if unit_key:
+            unit = QLabel()
+            i18n.text(unit, unit_key)
+            unit.setObjectName("fieldLabel")
+            row.addWidget(unit)
+        return holder
+
+    @staticmethod
+    def _numbered_edit(text, pattern, width=FIELD_WIDTH, validator_owner=None):
+        edit = QLineEdit(text)
+        edit.setValidator(
+            QRegularExpressionValidator(QRegularExpression(pattern), validator_owner)
+        )
+        edit.setFixedWidth(width)
+        return edit
+
     def create_widgets(self):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(12, 8, 12, 8)
-        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(10)
         self._create_menu_bar()
+
         file_box = QGroupBox()
         file_layout = QHBoxLayout(file_box)
-        btn_select = QPushButton("加载谱面")
+        file_layout.setSpacing(ROW_SPACING)
+        btn_select = QPushButton()
+        i18n.text(btn_select, "file.load")
         btn_select.setObjectName("primaryBtn")
-        btn_select.setToolTip("选择 .adofai 谱面文件 (Ctrl+O),或直接拖放文件到窗口")
+        i18n.tip(btn_select, "file.load.tip")
         btn_select.clicked.connect(self.select_file)
         file_layout.addWidget(btn_select)
-        self.lbl_file = QLabel("未选择谱面")
-        self.lbl_file.setStyleSheet("color: #7a8694;")
+        self.lbl_file = QLabel()
+        i18n.text(self.lbl_file, "file.none")
+        self.lbl_file.setObjectName("hintLabel")
         self.lbl_file.setToolTip("")
         file_layout.addWidget(self.lbl_file, 1)
-        btn_key_config = QPushButton("按键配置")
-        btn_key_config.setToolTip("打开按键配置窗口")
+        btn_key_config = QPushButton()
+        i18n.text(btn_key_config, "file.key_config")
+        i18n.tip(btn_key_config, "file.key_config.tip")
         btn_key_config.clicked.connect(self.open_key_config)
         file_layout.addWidget(btn_key_config)
         main_layout.addWidget(file_box)
+
         self.output_keys_box = self._build_output_keys_box()
         self.trigger_box = self._build_trigger_box()
         self.delay_box = self._build_delay_box()
@@ -435,241 +565,301 @@ class ADOFAIPlayer(QMainWindow):
         self.macro_end_box = self._build_macro_end_box()
         self.rhythm_hint_box = self._build_rhythm_hint_box()
         self.falling_notes_box = self._build_falling_notes_box()
-        control_box = QGroupBox("播放控制")
-        control_layout = QVBoxLayout(control_box)
-        control_layout.setSpacing(6)
-        row1 = QHBoxLayout()
-        row1.setSpacing(8)
-        row1.addWidget(QLabel("倍速:"))
-        self.speed_edit = QLineEdit("1.0")
-        self.speed_edit.setValidator(self._make_validator(r"\d*\.?\d*"))
-        self.speed_edit.setFixedWidth(50)
-        self.speed_edit.setToolTip("播放倍速")
+
+        # --- playback control: a grid keeps every label/field pair aligned ---
+        control_box = QGroupBox()
+        i18n.group_title(control_box, "control.title")
+        control_layout = QGridLayout(control_box)
+        control_layout.setHorizontalSpacing(COL_SPACING)
+        control_layout.setVerticalSpacing(ROW_SPACING)
+
+        self.speed_edit = self._numbered_edit("1.0", r"\d*\.?\d*", FIELD_WIDTH, self)
+        i18n.tip(self.speed_edit, "control.speed.tip")
         self.speed_edit.editingFinished.connect(self._on_speed_changed)
-        row1.addWidget(self.speed_edit)
-        row1.addWidget(QLabel("x"))
-        row1.addStretch(1)
-        control_layout.addLayout(row1)
-        row2 = QHBoxLayout()
-        row2.setSpacing(8)
-        row2.addWidget(QLabel("按键时长:"))
-        self.press_duration_edit = QLineEdit(str(self.config.get("press_duration", 40)))
-        self.press_duration_edit.setValidator(self._make_validator(r"\d*"))
-        self.press_duration_edit.setFixedWidth(50)
-        self.press_duration_edit.setToolTip("普通按键的按下持续时间(ms)")
+        speed_cell = QWidget()
+        speed_row = QHBoxLayout(speed_cell)
+        speed_row.setContentsMargins(0, 0, 0, 0)
+        speed_row.setSpacing(6)
+        speed_row.addWidget(self._field_label("control.speed"))
+        speed_row.addWidget(self.speed_edit)
+        speed_row.addWidget(QLabel("x"))
+        control_layout.addWidget(speed_cell, 0, 0)
+
+        self.press_duration_edit = self._numbered_edit(
+            str(self.config.get("press_duration", 40)), r"\d*", FIELD_WIDTH, self
+        )
+        i18n.tip(self.press_duration_edit, "control.press_duration.tip")
         self.press_duration_edit.editingFinished.connect(self._on_speed_changed)
-        row2.addWidget(self.press_duration_edit)
-        row2.addWidget(QLabel("ms"))
-        row2.addSpacing(14)
-        row2.addWidget(QLabel("偏移:"))
+        control_layout.addWidget(
+            self._field("control.press_duration", self.press_duration_edit, "common.ms"),
+            0, 1,
+        )
+
         self.offset_label = QLabel("+0")
         self.offset_label.setStyleSheet("color: black; font-weight: 600;")
-        self.offset_label.setMinimumWidth(44)
-        row2.addWidget(self.offset_label)
-        row2.addWidget(QLabel("ms"))
-        row2.addWidget(QLabel("(←提前 延后→)"))
-        row2.addStretch(1)
-        self.verbose_check = QCheckBox("详细输出")
-        self.verbose_check.setChecked(self.verbose)
-        self.verbose_check.setToolTip("打印每个按键的按下 / 释放时间")
-        row2.addWidget(self.verbose_check)
-        control_layout.addLayout(row2)
-        
-        row3 = QHBoxLayout()
-        row3.setSpacing(8)
-        row3.addWidget(QLabel("正常偏移 ±"))
-        self.regular_offset_edit = QLineEdit(str(self.regular_offset_ms))
-        self.regular_offset_edit.setValidator(self._make_validator(r"\d*\.?\d*"))
-        self.regular_offset_edit.setFixedWidth(50)
-        self.regular_offset_edit.setToolTip("正常角度(如90, 180度)及雙押/三連音的随机偏移量(ms)")
-        self.regular_offset_edit.editingFinished.connect(self._on_offset_changed)
-        row3.addWidget(self.regular_offset_edit)
-        row3.addWidget(QLabel("ms"))
-        row3.addSpacing(14)
-        row3.addWidget(QLabel("不规则偏移 ±"))
-        self.irregular_offset_edit = QLineEdit(str(self.irregular_offset_ms))
-        self.irregular_offset_edit.setValidator(self._make_validator(r"\d*\.?\d*"))
-        self.irregular_offset_edit.setFixedWidth(50)
-        self.irregular_offset_edit.setToolTip("不规则角度(如45, 58度)的随机偏移量(ms)")
-        self.irregular_offset_edit.editingFinished.connect(self._on_offset_changed)
-        row3.addWidget(self.irregular_offset_edit)
-        row3.addWidget(QLabel("ms"))
-        row3.addStretch(1)
-        control_layout.addLayout(row3)
+        self.offset_label.setMinimumWidth(VALUE_MIN_WIDTH)
+        offset_cell = QWidget()
+        offset_row = QHBoxLayout(offset_cell)
+        offset_row.setContentsMargins(0, 0, 0, 0)
+        offset_row.setSpacing(6)
+        offset_row.addWidget(self._field_label("control.offset"))
+        offset_row.addWidget(self.offset_label)
+        offset_row.addWidget(self._field_label("common.ms", 0))
+        offset_hint = QLabel()
+        i18n.text(offset_hint, "control.offset.hint")
+        offset_hint.setObjectName("hintLabel")
+        offset_row.addWidget(offset_hint)
+        offset_row.addStretch(1)
+        control_layout.addWidget(offset_cell, 1, 0)
 
-        row_font = QHBoxLayout()
-        row_font.setSpacing(8)
-        row_font.addWidget(QLabel("界面字体:"))
+        self.verbose_check = QCheckBox()
+        i18n.text(self.verbose_check, "control.verbose")
+        self.verbose_check.setChecked(self.verbose)
+        i18n.tip(self.verbose_check, "control.verbose.tip")
+        control_layout.addWidget(
+            self.verbose_check, 1, 1, alignment=Qt.AlignLeft | Qt.AlignVCenter
+        )
+
+        self.regular_offset_edit = self._numbered_edit(
+            str(self.regular_offset_ms), r"\d*\.?\d*", FIELD_WIDTH, self
+        )
+        i18n.tip(self.regular_offset_edit, "control.regular_offset.tip")
+        self.regular_offset_edit.editingFinished.connect(self._on_offset_changed)
+        control_layout.addWidget(
+            self._field("control.regular_offset", self.regular_offset_edit, "common.ms"),
+            2, 0,
+        )
+
+        self.irregular_offset_edit = self._numbered_edit(
+            str(self.irregular_offset_ms), r"\d*\.?\d*", FIELD_WIDTH, self
+        )
+        i18n.tip(self.irregular_offset_edit, "control.irregular_offset.tip")
+        self.irregular_offset_edit.editingFinished.connect(self._on_offset_changed)
+        control_layout.addWidget(
+            self._field(
+                "control.irregular_offset", self.irregular_offset_edit, "common.ms"
+            ),
+            2, 1,
+        )
+
         self.font_combo = QComboBox()
         self.font_combo.addItems(sorted(QFontDatabase.families()))
         idx = self.font_combo.findText(self.font_name)
         if idx >= 0:
             self.font_combo.setCurrentIndex(idx)
-        self.font_combo.setFixedWidth(150)
-        self.font_combo.setToolTip("更改程序界面的显示字体")
+        self.font_combo.setFixedWidth(170)
+        i18n.tip(self.font_combo, "control.font.tip")
         self.font_combo.currentTextChanged.connect(self._on_font_changed)
-        row_font.addWidget(self.font_combo)
-        
-        row_font.addSpacing(10)
-        row_font.addWidget(QLabel("字号:"))
+        font_cell = QWidget()
+        font_row = QHBoxLayout(font_cell)
+        font_row.setContentsMargins(0, 0, 0, 0)
+        font_row.setSpacing(6)
+        font_row.addWidget(self._field_label("control.font"))
+        font_row.addWidget(self.font_combo)
+        font_row.addSpacing(6)
         self.font_size_spin = QSpinBox()
         self.font_size_spin.setRange(8, 20)
         self.font_size_spin.setValue(self.font_size)
-        self.font_size_spin.setFixedWidth(50)
-        self.font_size_spin.setToolTip("更改程序界面的字体大小")
+        self.font_size_spin.setFixedWidth(FIELD_WIDTH_WIDE)
+        i18n.tip(self.font_size_spin, "control.font_size.tip")
         self.font_size_spin.valueChanged.connect(self._on_font_changed)
-        row_font.addWidget(self.font_size_spin)
-        row_font.addStretch(1)
-        control_layout.addLayout(row_font)
+        font_row.addWidget(self._field_label("control.font_size", 0))
+        font_row.addWidget(self.font_size_spin)
+        font_row.addStretch(1)
+        control_layout.addWidget(font_cell, 3, 0, 1, 2)
+        control_layout.setColumnStretch(1, 1)
 
         main_layout.addWidget(control_box)
-        technique_box = QGroupBox("手法模拟")
-        self.technique_layout = QHBoxLayout(technique_box)
-        self.technique_layout.setSpacing(10)
-        self.technique_check = QCheckBox("启用手法模拟")
+
+        # --- technique: switches on the first row, parameters on the second ---
+        technique_box = QGroupBox()
+        i18n.group_title(technique_box, "technique.title")
+        self.technique_layout = QGridLayout(technique_box)
+        self.technique_layout.setHorizontalSpacing(COL_SPACING)
+        self.technique_layout.setVerticalSpacing(ROW_SPACING)
+
+        self.technique_check = QCheckBox()
+        i18n.text(self.technique_check, "technique.enabled")
         self.technique_check.setChecked(self.technique_enabled)
-        self.technique_check.setToolTip("用拟人双手多指手法分配按键(内轮 V3.3)")
+        i18n.tip(self.technique_check, "technique.enabled.tip")
         self.technique_check.toggled.connect(self._on_technique_toggled)
-        self.technique_layout.addWidget(self.technique_check)
-        
-        self.technique_layout.addWidget(QLabel("风格:"))
-        self.technique_style_combo = QComboBox()
-        self.technique_style_combo.addItems(STYLE_NAMES)
-        self.technique_style_combo.setCurrentText(self.technique_style)
-        self.technique_style_combo.setFixedWidth(90)
-        self.technique_layout.addWidget(self.technique_style_combo)
-        
-        self.technique_layout.addWidget(QLabel("单指KPS:"))
-        self.single_kps_edit = QLineEdit(str(self.technique_single_kps))
-        self.single_kps_edit.setValidator(self._make_validator(r"\d*\.?\d*"))
-        self.single_kps_edit.setFixedWidth(55)
-        self.single_kps_edit.setToolTip("单手单指可达到的按键速度(次/秒),决定轮指阈值")
-        self.single_kps_edit.editingFinished.connect(self._on_speed_changed)
-        self.technique_layout.addWidget(self.single_kps_edit)
-        
-        self.technique_layout.addWidget(QLabel("主手:"))
-        self.main_hand_combo = QComboBox()
-        self.main_hand_combo.addItems(["右手", "左手"])
-        self.main_hand_combo.setCurrentText(
-            "右手" if self.technique_main_hand == "right" else "左手"
-        )
-        self.main_hand_combo.setFixedWidth(70)
-        self.main_hand_combo.currentIndexChanged.connect(self._on_speed_changed)
-        self.technique_layout.addWidget(self.main_hand_combo)
-        
-        self.technique_follow_speed_check = QCheckBox("根据倍速进行解析")
+        self.technique_layout.addWidget(self.technique_check, 0, 0)
+
+        self.technique_follow_speed_check = QCheckBox()
+        i18n.text(self.technique_follow_speed_check, "technique.follow_speed")
         self.technique_follow_speed_check.setChecked(self.technique_follow_speed)
-        self.technique_follow_speed_check.setToolTip(
-            "勾选后,手法模拟按倍速缩放按键间隔再分配手指\n"
-            "(如 2x 倍速时按 2 倍按键密度解析手法);\n"
-            "不勾选则始终按 1x 原速解析"
-        )
+        i18n.tip(self.technique_follow_speed_check, "technique.follow_speed.tip")
         self.technique_follow_speed_check.toggled.connect(self._on_speed_changed)
-        self.technique_layout.addWidget(self.technique_follow_speed_check)
-        self.technique_layout.addStretch(1)
-        
+        self.technique_layout.addWidget(self.technique_follow_speed_check, 0, 2)
+
+        self.technique_style_combo = QComboBox()
+        self.technique_style_combo.setFixedWidth(110)
+        self._fill_technique_styles()
+        self.technique_layout.addWidget(
+            self._field("technique.style", self.technique_style_combo), 1, 0
+        )
+
+        self.single_kps_edit = self._numbered_edit(
+            str(self.technique_single_kps), r"\d*\.?\d*", FIELD_WIDTH, self
+        )
+        i18n.tip(self.single_kps_edit, "technique.single_kps.tip")
+        self.single_kps_edit.editingFinished.connect(self._on_speed_changed)
+        self.technique_layout.addWidget(
+            self._field("technique.single_kps", self.single_kps_edit), 1, 1
+        )
+
+        self.main_hand_combo = QComboBox()
+        self.main_hand_combo.setFixedWidth(100)
+        self._fill_main_hands()
+        self.main_hand_combo.currentIndexChanged.connect(self._on_speed_changed)
+        self.technique_layout.addWidget(
+            self._field("technique.main_hand", self.main_hand_combo), 1, 2
+        )
+        self.technique_layout.setColumnStretch(3, 1)
+
         main_layout.addWidget(technique_box)
-        
+
         # 初始化时更新一次置灰状态
         self._update_technique_controls_state(self.technique_enabled)
 
         if self._parse_log_enabled:
-            log_box = QGroupBox("谱面解析日志")
+            log_box = QGroupBox()
+            i18n.group_title(log_box, "logbox.title")
             log_layout = QHBoxLayout(log_box)
-            btn_view = QPushButton("查看日志")
+            btn_view = QPushButton()
+            i18n.text(btn_view, "logbox.view")
             btn_view.clicked.connect(self.show_parse_logs)
-            btn_save_log = QPushButton("保存日志")
+            btn_save_log = QPushButton()
+            i18n.text(btn_save_log, "logbox.save")
             btn_save_log.clicked.connect(self.save_parse_logs)
             log_layout.addWidget(btn_view)
             log_layout.addWidget(btn_save_log)
-            self.lbl_log_count = QLabel("日志: 0 条")
-            self.lbl_log_count.setStyleSheet("color: gray;")
+            self.lbl_log_count = QLabel()
+            i18n.text(self.lbl_log_count, "logbox.count", count=0)
+            self.lbl_log_count.setObjectName("hintLabel")
             log_layout.addWidget(self.lbl_log_count)
             log_layout.addStretch(1)
             main_layout.addWidget(log_box)
         status = self.statusBar()
-        self.status_label = QLabel("就绪")
-        self.status_label.setStyleSheet("color: gray;")
+        self.status_label = QLabel()
+        self.status_label.setObjectName("hintLabel")
         status.addWidget(self.status_label)
+        self._set_status_key("status.ready")
         self.refresh_key_list()
         self._update_window_on_top_action()
 
-    def _fit_window_to_content(self):
-        self.adjustSize()
-        hint = self.sizeHint()
-        self.setFixedSize(hint.width() + 12, hint.height() + 8)
+    def _fill_technique_styles(self):
+        """Fill the style combo; the stored value stays language independent."""
+        entries = []
+        for name in STYLE_NAMES:
+            key = {
+                "内轮": "technique.style.inner_wheel",
+            }.get(name, name)
+            entries.append((name, key))
+        i18n.fill_combo(self.technique_style_combo, entries)
+        self._select_combo_data(self.technique_style_combo, self.technique_style)
+
+    def _fill_main_hands(self):
+        i18n.fill_combo(
+            self.main_hand_combo,
+            [("right", "technique.hand.right"), ("left", "technique.hand.left")],
+        )
+        self._select_combo_data(self.main_hand_combo, self.technique_main_hand)
+
+    @staticmethod
+    def _select_combo_data(combo, data, default=0):
+        index = combo.findData(data)
+        combo.setCurrentIndex(index if index >= 0 else default)
+
+    def _current_technique_style(self):
+        data = self.technique_style_combo.currentData()
+        return data if isinstance(data, str) and data else STYLE_NAMES[0]
+
+    def _current_main_hand(self):
+        data = self.main_hand_combo.currentData()
+        return data if data in ("left", "right") else "right"
+
+    def _fit_window_to_content(self, grow_only=False):
+        """Size the window to its contents, optionally never shrinking it."""
+        sizing.fit_window_to_content(self, grow_only=grow_only)
 
     def _build_output_keys_box(self):
-        box = QGroupBox("输出按键设置")
+        box = QGroupBox()
+        i18n.group_title(box, "output.title")
         layout = QHBoxLayout(box)
         layout.setSpacing(16)
-        self._create_key_list(box, "左手按键", "left", "left_listbox",
+        self._create_key_list(box, "output.left", "left", "left_listbox",
                               "left_del_btn", "left_up_btn", "left_down_btn")
-        self._create_key_list(box, "右手按键", "right", "right_listbox",
+        self._create_key_list(box, "output.right", "right", "right_listbox",
                               "right_del_btn", "right_up_btn", "right_down_btn")
         return box
 
     def _build_trigger_box(self):
-        box = QGroupBox("触发键设置")
+        box = QGroupBox()
+        i18n.group_title(box, "trigger.title")
         layout = QHBoxLayout(box)
-        layout.addWidget(QLabel("触发键:"))
+        layout.setSpacing(ROW_SPACING)
+        layout.addWidget(self._field_label("trigger.key", 0))
         self.lbl_hotkey = QLabel(self.macro_hotkey)
         self.lbl_hotkey.setStyleSheet("color: #0b57d0; font-weight: 600;")
+        self.lbl_hotkey.setMinimumWidth(VALUE_MIN_WIDTH)
         layout.addWidget(self.lbl_hotkey)
-        btn_bind_trigger = QPushButton("绑定")
-        btn_bind_trigger.setToolTip("重新绑定全局触发键")
+        btn_bind_trigger = QPushButton()
+        i18n.text(btn_bind_trigger, "common.bind")
+        i18n.tip(btn_bind_trigger, "trigger.bind.tip")
         btn_bind_trigger.clicked.connect(lambda: self.bind_key("trigger"))
         layout.addWidget(btn_bind_trigger)
         layout.addStretch(1)
         return box
 
     def _build_delay_box(self):
-        box = QGroupBox("延迟调整")
+        box = QGroupBox()
+        i18n.group_title(box, "delay.title")
         layout = QVBoxLayout(box)
-        layout.setSpacing(6)
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        row.addWidget(QLabel("提前:"))
-        self.lbl_offset_left = QLabel(self.offset_left_key)
-        self.lbl_offset_left.setStyleSheet("color: #0b57d0; font-weight: 600;")
-        self.lbl_offset_left.setMinimumWidth(70)
-        row.addWidget(self.lbl_offset_left)
-        btn_left = QPushButton("绑定")
-        btn_left.clicked.connect(lambda: self.bind_key("offset_left"))
-        row.addWidget(btn_left)
-        row.addSpacing(24)
-        row.addWidget(QLabel("延后:"))
-        self.lbl_offset_right = QLabel(self.offset_right_key)
-        self.lbl_offset_right.setStyleSheet("color: #0b57d0; font-weight: 600;")
-        self.lbl_offset_right.setMinimumWidth(70)
-        row.addWidget(self.lbl_offset_right)
-        btn_right = QPushButton("绑定")
-        btn_right.clicked.connect(lambda: self.bind_key("offset_right"))
-        row.addWidget(btn_right)
-        row.addStretch(1)
-        layout.addLayout(row)
-        self.realtime_offset_check = QCheckBox("实时延迟调节")
+        layout.setSpacing(ROW_SPACING)
+        # Earlier / later stacked on their own rows keeps this box about as
+        # narrow as the trigger box it sits next to.
+        self.lbl_offset_left, btn_left = self._offset_row(
+            layout, "delay.earlier", self.offset_left_key, "offset_left"
+        )
+        self.lbl_offset_right, btn_right = self._offset_row(
+            layout, "delay.later", self.offset_right_key, "offset_right"
+        )
+        self.realtime_offset_check = QCheckBox()
+        i18n.text(self.realtime_offset_check, "delay.realtime")
         self.realtime_offset_check.setChecked(self.realtime_offset_enabled)
-        self.realtime_offset_check.setToolTip("开启后可在播放时用「提前/延后」键实时调整延迟")
+        i18n.tip(self.realtime_offset_check, "delay.realtime.tip")
         self.realtime_offset_check.toggled.connect(self._on_realtime_offset_toggled)
         layout.addWidget(self.realtime_offset_check)
         return box
 
-    @staticmethod
-    def _macro_end_mode_from_text(text):
-        return {
-            "仅触发键": "trigger",
-            "仅 ESC": "esc",
-            "均生效": "both",
-        }.get(text, "both")
+    def _offset_row(self, layout, label_key, key_name, key_type):
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        row.addWidget(self._field_label(label_key))
+        value = QLabel(key_name)
+        value.setStyleSheet("color: #0b57d0; font-weight: 600;")
+        value.setMinimumWidth(VALUE_MIN_WIDTH)
+        row.addWidget(value)
+        btn = QPushButton()
+        i18n.text(btn, "common.bind")
+        btn.clicked.connect(lambda _checked=False, k=key_type: self.bind_key(k))
+        row.addWidget(btn)
+        row.addStretch(1)
+        layout.addLayout(row)
+        return value, btn
 
     @staticmethod
-    def _macro_end_mode_to_text(mode):
-        return {
-            "trigger": "仅触发键",
-            "esc": "仅 ESC",
-            "both": "均生效",
-        }.get(mode, "均生效")
+    def _coerce_macro_end_mode(mode):
+        return mode if mode in ("trigger", "esc", "both") else "both"
+
+    def _current_macro_end_mode(self):
+        return self._coerce_macro_end_mode(self.macro_end_combo.currentData())
+
+    def _set_macro_end_mode(self, mode):
+        index = self.macro_end_combo.findData(self._coerce_macro_end_mode(mode))
+        if index >= 0:
+            self.macro_end_combo.setCurrentIndex(index)
 
     def _bound_control_keys(self):
         return bound_control_keys(
@@ -690,27 +880,22 @@ class ADOFAIPlayer(QMainWindow):
         self._apply_key_output_options()
 
     def _build_key_output_box(self):
-        box = QGroupBox("按键输出")
+        box = QGroupBox()
+        i18n.group_title(box, "key_output.title")
         layout = QHBoxLayout(box)
-        layout.setSpacing(8)
-        self.disable_key_output_check = QCheckBox("禁用 Macro 按键输出")
+        layout.setSpacing(16)
+        self.disable_key_output_check = QCheckBox()
+        i18n.text(self.disable_key_output_check, "key_output.disable")
         self.disable_key_output_check.setChecked(self.disable_key_output)
-        self.disable_key_output_check.setToolTip(
-            "勾选后 Macro 不再向游戏输出按键，只保留节奏提示 / 下落式窗口的播放\n"
-            "(可以用来只看谱面、或手动跟着提示打)"
-        )
+        i18n.tip(self.disable_key_output_check, "key_output.disable.tip")
         self.disable_key_output_check.toggled.connect(
             self._on_disable_key_output_toggled
         )
         layout.addWidget(self.disable_key_output_check)
-        layout.addSpacing(10)
-        self.suppress_bound_keys_check = QCheckBox("屏蔽已绑定按键输入")
+        self.suppress_bound_keys_check = QCheckBox()
+        i18n.text(self.suppress_bound_keys_check, "key_output.suppress")
         self.suppress_bound_keys_check.setChecked(self.suppress_bound_keys)
-        self.suppress_bound_keys_check.setToolTip(
-            "勾选(默认)：除了输出按键以外，程序里已绑定的按键都不会传给游戏\n"
-            "（触发键、偏移调节键、结束键 ESC），避免误触发游戏自身的按键功能\n"
-            "取消勾选：这些绑定键同时也会被游戏收到"
-        )
+        i18n.tip(self.suppress_bound_keys_check, "key_output.suppress.tip")
         self.suppress_bound_keys_check.toggled.connect(
             self._on_suppress_bound_keys_toggled
         )
@@ -739,21 +924,32 @@ class ADOFAIPlayer(QMainWindow):
             )
 
     def _build_macro_end_box(self):
-        box = QGroupBox("Macro 结束方式")
+        box = QGroupBox()
+        i18n.group_title(box, "macro_end.title")
         layout = QHBoxLayout(box)
-        layout.addWidget(QLabel("结束方式:"))
+        layout.setSpacing(ROW_SPACING)
+        layout.addWidget(self._field_label("macro_end.label", 0))
         self.macro_end_combo = QComboBox()
-        self.macro_end_combo.addItems(["仅触发键", "仅 ESC", "均生效"])
-        self.macro_end_combo.setCurrentText(self._macro_end_mode_to_text(self.macro_end_mode))
-        self.macro_end_combo.setFixedWidth(120)
-        self.macro_end_combo.setToolTip("指定结束 Macro 的条件，修改后立即生效")
-        self.macro_end_combo.currentTextChanged.connect(self._on_macro_end_mode_changed)
+        i18n.fill_combo(
+            self.macro_end_combo,
+            [
+                ("trigger", "macro_end.trigger"),
+                ("esc", "macro_end.esc"),
+                ("both", "macro_end.both"),
+            ],
+        )
+        self._set_macro_end_mode(self.macro_end_mode)
+        self.macro_end_combo.setFixedWidth(140)
+        i18n.tip(self.macro_end_combo, "macro_end.tip")
+        self.macro_end_combo.currentIndexChanged.connect(
+            self._on_macro_end_mode_changed
+        )
         layout.addWidget(self.macro_end_combo)
         layout.addStretch(1)
         return box
 
-    def _on_macro_end_mode_changed(self, text):
-        self.macro_end_mode = self._macro_end_mode_from_text(text)
+    def _on_macro_end_mode_changed(self, *_args):
+        self.macro_end_mode = self._current_macro_end_mode()
         self.config["macro_end_mode"] = self.macro_end_mode
         self._refresh_escape_hook()
 
@@ -773,174 +969,183 @@ class ADOFAIPlayer(QMainWindow):
         self.other_settings_window.raise_()
         self.other_settings_window.activateWindow()
 
+    def _division_entries(self):
+        return [(d, "division.item", {"n": d}) for d in RHYTHM_HINT_DIVISIONS]
+
     def _build_rhythm_hint_box(self):
-        box = QGroupBox("节奏提示")
-        layout = QHBoxLayout(box)
-        layout.setSpacing(8)
-        self.rhythm_hint_check = QCheckBox("启用节奏提示窗口")
+        box = QGroupBox()
+        i18n.group_title(box, "rhythm.title")
+        layout = QVBoxLayout(box)
+        layout.setSpacing(ROW_SPACING)
+
+        self.rhythm_hint_check = QCheckBox()
+        i18n.text(self.rhythm_hint_check, "rhythm.enabled")
         self.rhythm_hint_check.setChecked(self.rhythm_hint_enabled)
-        self.rhythm_hint_check.setToolTip(
-            "开启后自动打开独立的节奏提示窗口\n"
-            "(太鼓达人风格谱面：红圈=普通按键，黄圈=长按按键)"
-        )
+        i18n.tip(self.rhythm_hint_check, "rhythm.enabled.tip")
         self.rhythm_hint_check.toggled.connect(self._on_rhythm_hint_toggled)
         layout.addWidget(self.rhythm_hint_check)
-        layout.addSpacing(10)
-        layout.addWidget(QLabel("流速:"))
+
+        params = QHBoxLayout()
+        params.setSpacing(COL_SPACING)
         self.rhythm_hint_speed_edit = QLineEdit(str(int(self.rhythm_hint_speed)))
         self.rhythm_hint_speed_edit.setValidator(self._make_validator(r"\d*"))
-        self.rhythm_hint_speed_edit.setFixedWidth(56)
-        self.rhythm_hint_speed_edit.setToolTip(
-            "音符向左移动的速度(整数)：100 = 1x，200 = 2x，50 = 0.5x"
-        )
+        self.rhythm_hint_speed_edit.setFixedWidth(FIELD_WIDTH)
+        i18n.tip(self.rhythm_hint_speed_edit, "rhythm.speed.tip")
         self.rhythm_hint_speed_edit.editingFinished.connect(
             self._on_rhythm_hint_options_changed
         )
-        layout.addWidget(self.rhythm_hint_speed_edit)
-        layout.addSpacing(10)
-        layout.addWidget(QLabel("切分:"))
+        params.addWidget(
+            self._field("common.speed", self.rhythm_hint_speed_edit, minimum=0)
+        )
+
         self.rhythm_hint_division_combo = QComboBox()
-        for division in RHYTHM_HINT_DIVISIONS:
-            self.rhythm_hint_division_combo.addItem(f"{division}分")
-        division_text = f"{self.rhythm_hint_division}分"
-        division_idx = self.rhythm_hint_division_combo.findText(division_text)
-        if division_idx < 0:
-            division_idx = 0
-        self.rhythm_hint_division_combo.setCurrentIndex(division_idx)
-        self.rhythm_hint_division_combo.setFixedWidth(70)
-        self.rhythm_hint_division_combo.setToolTip("切分线密度：按 4/8/16/32 分切割")
-        self.rhythm_hint_division_combo.currentTextChanged.connect(
+        i18n.fill_combo(self.rhythm_hint_division_combo, self._division_entries())
+        self._select_combo_data(
+            self.rhythm_hint_division_combo, self.rhythm_hint_division
+        )
+        self.rhythm_hint_division_combo.setFixedWidth(FIELD_WIDTH_WIDE)
+        i18n.tip(self.rhythm_hint_division_combo, "division.tip")
+        self.rhythm_hint_division_combo.currentIndexChanged.connect(
             self._on_rhythm_hint_options_changed
         )
-        layout.addWidget(self.rhythm_hint_division_combo)
-        self.rhythm_hint_hit_effect_check = QCheckBox("判定特效")
-        self.rhythm_hint_hit_effect_check.setChecked(self.rhythm_hint_hit_effect)
-        self.rhythm_hint_hit_effect_check.setToolTip(
-            "是否显示判定特效(音符到达判定点时放大的白色圆环)"
+        params.addWidget(
+            self._field("common.division", self.rhythm_hint_division_combo, minimum=0)
         )
+        params.addStretch(1)
+        layout.addLayout(params)
+
+        extras = QHBoxLayout()
+        extras.setSpacing(COL_SPACING)
+        self.rhythm_hint_hit_effect_check = QCheckBox()
+        i18n.text(self.rhythm_hint_hit_effect_check, "common.hit_effect")
+        self.rhythm_hint_hit_effect_check.setChecked(self.rhythm_hint_hit_effect)
+        i18n.tip(self.rhythm_hint_hit_effect_check, "rhythm.hit_effect.tip")
         self.rhythm_hint_hit_effect_check.toggled.connect(
             self._on_rhythm_hint_options_changed
         )
-        layout.addWidget(self.rhythm_hint_hit_effect_check)
-        self.rhythm_hint_multi_fix_check = QCheckBox("多押提示")
+        extras.addWidget(self.rhythm_hint_hit_effect_check)
+
+        self.rhythm_hint_multi_fix_check = QCheckBox()
+        i18n.text(self.rhythm_hint_multi_fix_check, "common.multi_fix")
         self.rhythm_hint_multi_fix_check.setChecked(self.rhythm_hint_multi_fix)
-        self.rhythm_hint_multi_fix_check.setToolTip(
-            "多押只显示组内第一个按键，并在圈内用数字标出这一押要同时按几个键\n"
-            "(多押判据：相邻音符按下间隔 <50ms，且后一格轨道夹角 <=30°(轨道 BPM>=300) / <=15°(轨道 BPM<300))"
-        )
+        i18n.tip(self.rhythm_hint_multi_fix_check, "rhythm.multi_fix.tip")
         self.rhythm_hint_multi_fix_check.toggled.connect(
             self._on_rhythm_hint_options_changed
         )
-        layout.addWidget(self.rhythm_hint_multi_fix_check)
-        self.rhythm_hint_default_size_btn = QPushButton("默认大小")
-        self.rhythm_hint_default_size_btn.setToolTip(
-            "把节奏提示窗口恢复到默认大小(900×150)"
-        )
+        extras.addWidget(self.rhythm_hint_multi_fix_check)
+
+        self.rhythm_hint_default_size_btn = QPushButton()
+        i18n.text(self.rhythm_hint_default_size_btn, "common.default_size")
+        i18n.tip(self.rhythm_hint_default_size_btn, "rhythm.default_size.tip")
         self.rhythm_hint_default_size_btn.clicked.connect(self.reset_rhythm_hint_size)
-        layout.addWidget(self.rhythm_hint_default_size_btn)
-        self.rhythm_hint_render_btn = QPushButton("重新渲染")
-        self.rhythm_hint_render_btn.setToolTip(
-            "重新渲染节奏提示窗口(不需要按触发键，窗口回到谱面起点)"
-        )
+        extras.addWidget(self.rhythm_hint_default_size_btn)
+
+        self.rhythm_hint_render_btn = QPushButton()
+        i18n.text(self.rhythm_hint_render_btn, "common.re_render")
+        i18n.tip(self.rhythm_hint_render_btn, "rhythm.re_render.tip")
         self.rhythm_hint_render_btn.clicked.connect(self.re_render_rhythm_hint)
-        layout.addWidget(self.rhythm_hint_render_btn)
-        layout.addStretch(1)
+        extras.addWidget(self.rhythm_hint_render_btn)
+        extras.addStretch(1)
+        layout.addLayout(extras)
         return box
 
     def _build_falling_notes_box(self):
-        box = QGroupBox("下落式")
-        layout = QHBoxLayout(box)
-        layout.setSpacing(8)
-        self.falling_notes_check = QCheckBox("启用下落式窗口")
+        box = QGroupBox()
+        i18n.group_title(box, "falling.title")
+        layout = QVBoxLayout(box)
+        layout.setSpacing(ROW_SPACING)
+
+        self.falling_notes_check = QCheckBox()
+        i18n.text(self.falling_notes_check, "falling.enabled")
         self.falling_notes_check.setChecked(self.falling_notes_enabled)
-        self.falling_notes_check.setToolTip(
-            "开启后自动打开独立的下落式窗口\n"
-            "(按键从上往下坠落，落到判定线时消失；左侧红色，右侧蓝色)"
-        )
+        i18n.tip(self.falling_notes_check, "falling.enabled.tip")
         self.falling_notes_check.toggled.connect(self._on_falling_notes_toggled)
         layout.addWidget(self.falling_notes_check)
-        layout.addSpacing(10)
-        layout.addWidget(QLabel("流速:"))
+
+        params = QHBoxLayout()
+        params.setSpacing(COL_SPACING)
         self.falling_notes_speed_edit = QLineEdit(str(int(self.falling_notes_speed)))
         self.falling_notes_speed_edit.setValidator(self._make_validator(r"\d*"))
-        self.falling_notes_speed_edit.setFixedWidth(56)
-        self.falling_notes_speed_edit.setToolTip(
-            "音符下落的快慢(整数)：100 = 1x，200 = 2x，50 = 0.5x"
-        )
+        self.falling_notes_speed_edit.setFixedWidth(FIELD_WIDTH)
+        i18n.tip(self.falling_notes_speed_edit, "falling.speed.tip")
         self.falling_notes_speed_edit.editingFinished.connect(
             self._on_falling_notes_options_changed
         )
-        layout.addWidget(self.falling_notes_speed_edit)
-        layout.addSpacing(10)
-        layout.addWidget(QLabel("切分:"))
+        params.addWidget(
+            self._field("common.speed", self.falling_notes_speed_edit, minimum=0)
+        )
+
         self.falling_notes_division_combo = QComboBox()
-        for division in RHYTHM_HINT_DIVISIONS:
-            self.falling_notes_division_combo.addItem(f"{division}分")
-        division_text = f"{self.falling_notes_division}分"
-        division_idx = self.falling_notes_division_combo.findText(division_text)
-        if division_idx < 0:
-            division_idx = 0
-        self.falling_notes_division_combo.setCurrentIndex(division_idx)
-        self.falling_notes_division_combo.setFixedWidth(70)
-        self.falling_notes_division_combo.setToolTip("切分线密度：按 4/8/16/32 分切割")
-        self.falling_notes_division_combo.currentTextChanged.connect(
+        i18n.fill_combo(self.falling_notes_division_combo, self._division_entries())
+        self._select_combo_data(
+            self.falling_notes_division_combo, self.falling_notes_division
+        )
+        self.falling_notes_division_combo.setFixedWidth(FIELD_WIDTH_WIDE)
+        i18n.tip(self.falling_notes_division_combo, "division.tip")
+        self.falling_notes_division_combo.currentIndexChanged.connect(
             self._on_falling_notes_options_changed
         )
-        layout.addWidget(self.falling_notes_division_combo)
-        layout.addSpacing(10)
-        layout.addWidget(QLabel("轨道数:"))
+        params.addWidget(
+            self._field("common.division", self.falling_notes_division_combo, minimum=0)
+        )
+
         self.falling_notes_lanes_combo = QComboBox()
-        for lanes in FALLING_NOTES_LANES:
-            self.falling_notes_lanes_combo.addItem(_falling_notes_lanes_text(lanes))
-        lanes_text = _falling_notes_lanes_text(self.falling_notes_lanes)
-        lanes_idx = self.falling_notes_lanes_combo.findText(lanes_text)
-        if lanes_idx < 0:
-            lanes_idx = 0
-        self.falling_notes_lanes_combo.setCurrentIndex(lanes_idx)
-        self.falling_notes_lanes_combo.setFixedWidth(88)
-        self.falling_notes_lanes_combo.setToolTip(
-            "轨道数量：4K(每手 2 轨) 或 8(16)K(每手 4 轨，支持到16键)，左右各占一半"
-        )
-        self.falling_notes_lanes_combo.currentTextChanged.connect(
+        self._fill_lanes_combo()
+        self.falling_notes_lanes_combo.setFixedWidth(FIELD_WIDTH_WIDE + 16)
+        i18n.tip(self.falling_notes_lanes_combo, "falling.lanes.tip")
+        self.falling_notes_lanes_combo.currentIndexChanged.connect(
             self._on_falling_notes_options_changed
         )
-        layout.addWidget(self.falling_notes_lanes_combo)
-        self.falling_notes_hit_effect_check = QCheckBox("判定特效")
-        self.falling_notes_hit_effect_check.setChecked(
-            self.falling_notes_hit_effect
+        params.addWidget(
+            self._field("falling.lanes", self.falling_notes_lanes_combo, minimum=0)
         )
-        self.falling_notes_hit_effect_check.setToolTip(
-            "是否显示判定特效(音符到达判定线时白色长方形由内向外扩散)"
-        )
+        params.addStretch(1)
+        layout.addLayout(params)
+
+        extras = QHBoxLayout()
+        extras.setSpacing(COL_SPACING)
+        self.falling_notes_hit_effect_check = QCheckBox()
+        i18n.text(self.falling_notes_hit_effect_check, "common.hit_effect")
+        self.falling_notes_hit_effect_check.setChecked(self.falling_notes_hit_effect)
+        i18n.tip(self.falling_notes_hit_effect_check, "falling.hit_effect.tip")
         self.falling_notes_hit_effect_check.toggled.connect(
             self._on_falling_notes_options_changed
         )
-        layout.addWidget(self.falling_notes_hit_effect_check)
-        self.falling_notes_multi_fix_check = QCheckBox("多押提示")
+        extras.addWidget(self.falling_notes_hit_effect_check)
+
+        self.falling_notes_multi_fix_check = QCheckBox()
+        i18n.text(self.falling_notes_multi_fix_check, "common.multi_fix")
         self.falling_notes_multi_fix_check.setChecked(self.falling_notes_multi_fix)
-        self.falling_notes_multi_fix_check.setToolTip(
-            "被识别为多押的一组按键，在下落式中按下时间对齐到组内第一个按键\n"
-            "(多押判据：相邻音符按下间隔 <50ms，且后一格轨道夹角 "
-            "<=30°(轨道 BPM>=300) / <=15°(轨道 BPM<300))"
-        )
+        i18n.tip(self.falling_notes_multi_fix_check, "falling.multi_fix.tip")
         self.falling_notes_multi_fix_check.toggled.connect(
             self._on_falling_notes_options_changed
         )
-        layout.addWidget(self.falling_notes_multi_fix_check)
-        self.falling_notes_default_size_btn = QPushButton("默认大小")
-        self.falling_notes_default_size_btn.setToolTip(
-            "把下落式窗口恢复到默认大小(380×820)"
-        )
+        extras.addWidget(self.falling_notes_multi_fix_check)
+
+        self.falling_notes_default_size_btn = QPushButton()
+        i18n.text(self.falling_notes_default_size_btn, "common.default_size")
+        i18n.tip(self.falling_notes_default_size_btn, "falling.default_size.tip")
         self.falling_notes_default_size_btn.clicked.connect(self.reset_falling_notes_size)
-        layout.addWidget(self.falling_notes_default_size_btn)
-        self.falling_notes_render_btn = QPushButton("重新渲染")
-        self.falling_notes_render_btn.setToolTip(
-            "重新渲染下落式窗口(不需要按触发键，窗口回到谱面起点)"
-        )
+        extras.addWidget(self.falling_notes_default_size_btn)
+
+        self.falling_notes_render_btn = QPushButton()
+        i18n.text(self.falling_notes_render_btn, "common.re_render")
+        i18n.tip(self.falling_notes_render_btn, "falling.re_render.tip")
         self.falling_notes_render_btn.clicked.connect(self.re_render_falling_notes)
-        layout.addWidget(self.falling_notes_render_btn)
-        layout.addStretch(1)
+        extras.addWidget(self.falling_notes_render_btn)
+        extras.addStretch(1)
+        layout.addLayout(extras)
         return box
+
+    def _fill_lanes_combo(self):
+        entries = []
+        for lanes in FALLING_NOTES_LANES:
+            if lanes == 8:
+                entries.append((lanes, "falling.lanes.item_wide"))
+            else:
+                entries.append((lanes, "falling.lanes.item", {"n": lanes}))
+        i18n.fill_combo(self.falling_notes_lanes_combo, entries)
+        self._select_combo_data(self.falling_notes_lanes_combo, self.falling_notes_lanes)
 
     def _on_rhythm_hint_toggled(self, checked):
         self.set_rhythm_hint_enabled(bool(checked))
@@ -957,7 +1162,7 @@ class ADOFAIPlayer(QMainWindow):
             self.open_rhythm_hint()
         elif self.rhythm_hint_window is not None:
             self.rhythm_hint_window.hide()
-        self._save_config_file("节奏提示开关")
+        self._save_config_file(i18n.tr("reason.rhythm_toggle"))
 
     def _on_rhythm_hint_closed(self):
         self.rhythm_hint_enabled = False
@@ -966,7 +1171,7 @@ class ADOFAIPlayer(QMainWindow):
             self.rhythm_hint_check.blockSignals(True)
             self.rhythm_hint_check.setChecked(False)
             self.rhythm_hint_check.blockSignals(False)
-        self._save_config_file("关闭节奏提示窗口")
+        self._save_config_file(i18n.tr("reason.rhythm_closed"))
 
     @staticmethod
     def _coerce_rhythm_hint_speed(value):
@@ -1014,8 +1219,9 @@ class ADOFAIPlayer(QMainWindow):
                 self.rhythm_hint_speed_edit.setText(str(speed))
                 self.rhythm_hint_speed_edit.blockSignals(False)
         if hasattr(self, "rhythm_hint_division_combo"):
-            text = self.rhythm_hint_division_combo.currentText().removesuffix("分")
-            self.rhythm_hint_division = self._coerce_rhythm_hint_division(text)
+            self.rhythm_hint_division = self._coerce_rhythm_hint_division(
+                self.rhythm_hint_division_combo.currentData()
+            )
         if hasattr(self, "rhythm_hint_hit_effect_check"):
             self.rhythm_hint_hit_effect = bool(
                 self.rhythm_hint_hit_effect_check.isChecked()
@@ -1045,9 +1251,10 @@ class ADOFAIPlayer(QMainWindow):
             self.rhythm_hint_speed_edit.setText(str(int(self.rhythm_hint_speed)))
             self.rhythm_hint_speed_edit.blockSignals(False)
         if hasattr(self, "rhythm_hint_division_combo"):
-            text = f"{self.rhythm_hint_division}分"
             self.rhythm_hint_division_combo.blockSignals(True)
-            self.rhythm_hint_division_combo.setCurrentText(text)
+            self._select_combo_data(
+                self.rhythm_hint_division_combo, self.rhythm_hint_division
+            )
             self.rhythm_hint_division_combo.blockSignals(False)
         if hasattr(self, "rhythm_hint_hit_effect_check"):
             self.rhythm_hint_hit_effect_check.blockSignals(True)
@@ -1067,7 +1274,7 @@ class ADOFAIPlayer(QMainWindow):
         if self.rhythm_hint_window is not None:
             self.rhythm_hint_window.reset_size()
             self._remember_hint_window_sizes()
-            self._save_config_file("节奏提示分辨率")
+            self._save_config_file(i18n.tr("reason.rhythm_size"))
 
     def re_render_rhythm_hint(self):
         if self.rhythm_hint_window is None:
@@ -1177,7 +1384,9 @@ class ADOFAIPlayer(QMainWindow):
         try:
             return self.adofai_angle.getBpmTimeline()
         except Exception as e:
-            self.log_message(f"读取谱面 BPM 变化失败,按固定 BPM 显示: {e}", "error")
+            self.log_message(
+                i18n.tr("log.bpm_timeline_failed", error=e), "error"
+            )
             return []
 
     def _chart_bpm(self):
@@ -1234,7 +1443,7 @@ class ADOFAIPlayer(QMainWindow):
             self.open_falling_notes()
         elif self.falling_notes_window is not None:
             self.falling_notes_window.hide()
-        self._save_config_file("下落式开关")
+        self._save_config_file(i18n.tr("reason.falling_toggle"))
 
     def _on_falling_notes_closed(self):
         self.falling_notes_enabled = False
@@ -1243,7 +1452,7 @@ class ADOFAIPlayer(QMainWindow):
             self.falling_notes_check.blockSignals(True)
             self.falling_notes_check.setChecked(False)
             self.falling_notes_check.blockSignals(False)
-        self._save_config_file("关闭下落式窗口")
+        self._save_config_file(i18n.tr("reason.falling_closed"))
 
     @staticmethod
     def _coerce_falling_notes_lanes(value):
@@ -1297,12 +1506,13 @@ class ADOFAIPlayer(QMainWindow):
                 self.falling_notes_speed_edit.setText(str(speed))
                 self.falling_notes_speed_edit.blockSignals(False)
         if hasattr(self, "falling_notes_division_combo"):
-            text = self.falling_notes_division_combo.currentText().removesuffix("分")
-            self.falling_notes_division = self._coerce_rhythm_hint_division(text)
+            self.falling_notes_division = self._coerce_rhythm_hint_division(
+                self.falling_notes_division_combo.currentData()
+            )
         if hasattr(self, "falling_notes_lanes_combo"):
-            text = self.falling_notes_lanes_combo.currentText()
-            text = text.split("(")[0].removesuffix("K")
-            self.falling_notes_lanes = self._coerce_falling_notes_lanes(text)
+            self.falling_notes_lanes = self._coerce_falling_notes_lanes(
+                self.falling_notes_lanes_combo.currentData()
+            )
         if hasattr(self, "falling_notes_hit_effect_check"):
             self.falling_notes_hit_effect = bool(
                 self.falling_notes_hit_effect_check.isChecked()
@@ -1337,14 +1547,14 @@ class ADOFAIPlayer(QMainWindow):
             self.falling_notes_speed_edit.blockSignals(False)
         if hasattr(self, "falling_notes_division_combo"):
             self.falling_notes_division_combo.blockSignals(True)
-            self.falling_notes_division_combo.setCurrentText(
-                f"{self.falling_notes_division}分"
+            self._select_combo_data(
+                self.falling_notes_division_combo, self.falling_notes_division
             )
             self.falling_notes_division_combo.blockSignals(False)
         if hasattr(self, "falling_notes_lanes_combo"):
             self.falling_notes_lanes_combo.blockSignals(True)
-            self.falling_notes_lanes_combo.setCurrentText(
-                _falling_notes_lanes_text(self.falling_notes_lanes)
+            self._select_combo_data(
+                self.falling_notes_lanes_combo, self.falling_notes_lanes
             )
             self.falling_notes_lanes_combo.blockSignals(False)
         if hasattr(self, "falling_notes_hit_effect_check"):
@@ -1365,7 +1575,7 @@ class ADOFAIPlayer(QMainWindow):
         if self.falling_notes_window is not None:
             self.falling_notes_window.reset_size()
             self._remember_hint_window_sizes()
-            self._save_config_file("下落式分辨率")
+            self._save_config_file(i18n.tr("reason.falling_size"))
 
     def re_render_falling_notes(self):
         if self.falling_notes_window is None:
@@ -1477,35 +1687,48 @@ class ADOFAIPlayer(QMainWindow):
         self.status_label.setText(text)
         self.status_label.setStyleSheet(f"color: {color};")
 
-    def _create_key_list(self, parent, title, key_type, listbox_attr,
+    def _set_status_key(self, key, color="gray", **fmt):
+        """Set the status bar from a translation key and remember it."""
+        self._status_state = (key, color, dict(fmt))
+        self._set_status(i18n.tr(key, **fmt), color)
+
+    def _create_key_list(self, parent, title_key, key_type, listbox_attr,
                          del_attr, up_attr, down_attr):
         panel = QWidget()
         vlayout = QVBoxLayout(panel)
         vlayout.setContentsMargins(0, 0, 0, 0)
         vlayout.setSpacing(6)
-        header = QLabel(title)
+        header = QLabel()
+        i18n.text(header, title_key)
         header.setStyleSheet("color: #33404f; font-weight: 600;")
         vlayout.addWidget(header)
         listbox = QListWidget()
-        listbox.setFixedHeight(130)
-        listbox.setToolTip("双击列表项可直接修改该按键")
+        listbox.setFixedHeight(140)
+        i18n.tip(listbox, "output.list.tip")
         listbox.itemDoubleClicked.connect(lambda item: self._rebind_key(listbox, key_type))
         vlayout.addWidget(listbox)
         setattr(self, listbox_attr, listbox)
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
-        add_btn = QPushButton("＋ 添加")
-        add_btn.setToolTip("绑定一个新按键")
+        add_btn = QPushButton()
+        i18n.text(add_btn, "output.add")
+        i18n.tip(add_btn, "output.add.tip")
         add_btn.clicked.connect(lambda: self.bind_key(key_type))
-        del_btn = QPushButton("－ 删除")
-        del_btn.setToolTip("删除选中按键")
+        del_btn = QPushButton()
+        i18n.text(del_btn, "output.delete")
+        i18n.tip(del_btn, "output.delete.tip")
         del_btn.clicked.connect(lambda: self._delete_selected(listbox, key_type))
-        up_btn = QPushButton("↑ 上移")
+        up_btn = QPushButton()
+        i18n.text(up_btn, "output.up")
         up_btn.clicked.connect(lambda: self._move_item(listbox, key_type, -1))
-        down_btn = QPushButton("↓ 下移")
+        down_btn = QPushButton()
+        i18n.text(down_btn, "output.down")
         down_btn.clicked.connect(lambda: self._move_item(listbox, key_type, 1))
         for btn in (add_btn, del_btn, up_btn, down_btn):
-            btn_row.addWidget(btn, 1)
+            # Natural width + a trailing stretch: the labels are never clipped
+            # and the row adapts on its own when the language changes.
+            btn_row.addWidget(btn)
+        btn_row.addStretch(1)
         vlayout.addLayout(btn_row)
         parent.layout().addWidget(panel, 1)
         setattr(self, del_attr, del_btn)
@@ -1539,18 +1762,18 @@ class ADOFAIPlayer(QMainWindow):
     def bind_key(self, key_type):
         self.disable_trigger = True
         try:
-            title = {
-                "trigger": "绑定触发键",
-                "left": "绑定左手按键",
-                "right": "绑定右手按键",
-                "offset_left": "绑定提前键",
-                "offset_right": "绑定延后键",
+            title_key = {
+                "trigger": "bind.title.trigger",
+                "left": "bind.title.left",
+                "right": "bind.title.right",
+                "offset_left": "bind.title.offset_left",
+                "offset_right": "bind.title.offset_right",
             }[key_type]
         except KeyError:
             self.disable_trigger = False
             return
         parent = self._ui_parent()
-        win = BindWindow(parent, title)
+        win = BindWindow(parent, i18n.tr(title_key))
         self._apply_window_flag(win, self.window_on_top)
         try:
             accepted = win.exec() == QDialog.Accepted
@@ -1562,10 +1785,10 @@ class ADOFAIPlayer(QMainWindow):
         output_keys = self.left_keys + self.right_keys
         if key_type == "trigger":
             if key in output_keys:
-                QMessageBox.warning(parent, "冲突", "触发键不能与输出键重复！")
+                self._warn_conflict(parent, "msg.trigger_conflict_output")
                 return
             if key in (self.offset_left_key, self.offset_right_key):
-                QMessageBox.warning(parent, "冲突", "触发键不能与延迟调整键重复！")
+                self._warn_conflict(parent, "msg.trigger_conflict_offset")
                 return
             self.macro_hotkey = key
             self.config["hotkey"] = self.macro_hotkey
@@ -1575,13 +1798,13 @@ class ADOFAIPlayer(QMainWindow):
         if key_type in ("offset_left", "offset_right"):
             other_key = self.offset_right_key if key_type == "offset_left" else self.offset_left_key
             if key == self.macro_hotkey:
-                QMessageBox.warning(parent, "冲突", "延迟调整键不能与触发键相同！")
+                self._warn_conflict(parent, "msg.offset_conflict_trigger")
                 return
             if key in output_keys:
-                QMessageBox.warning(parent, "冲突", "延迟调整键不能与输出键重复！")
+                self._warn_conflict(parent, "msg.offset_conflict_output")
                 return
             if key == other_key:
-                QMessageBox.warning(parent, "冲突", "提前键和延后键不能相同！")
+                self._warn_conflict(parent, "msg.offset_conflict_each_other")
                 return
             attr = self._offset_key_attr(key_type)
             setattr(self, attr, key)
@@ -1590,18 +1813,22 @@ class ADOFAIPlayer(QMainWindow):
             self._refresh_direction_keys()
             return
         if key == self.macro_hotkey:
-            QMessageBox.warning(parent, "冲突", "输出键不能与触发键相同！")
+            self._warn_conflict(parent, "msg.output_conflict_trigger")
             return
         if key in output_keys:
-            QMessageBox.warning(parent, "冲突", "该按键已存在于按键列表中！")
+            self._warn_conflict(parent, "msg.duplicate_key")
             return
         if key in (self.offset_left_key, self.offset_right_key):
-            QMessageBox.warning(parent, "冲突", "输出键不能与延迟调整键重复！")
+            self._warn_conflict(parent, "msg.output_conflict_offset")
             return
         self._keys_of(key_type).append(key)
         self._sync_custom_keys()
         self.refresh_key_list()
         self.update_buttons_state()
+
+    @staticmethod
+    def _warn_conflict(parent, message_key):
+        QMessageBox.warning(parent, i18n.tr("dialog.conflict"), i18n.tr(message_key))
 
     def _rebind_key(self, listbox, key_type):
         row = listbox.currentRow()
@@ -1610,7 +1837,7 @@ class ADOFAIPlayer(QMainWindow):
         current = self._keys_of(key_type)[row]
         self.disable_trigger = True
         parent = self._ui_parent()
-        win = BindWindow(parent, "修改按键")
+        win = BindWindow(parent, i18n.tr("bind.title.rebind"))
         self._apply_window_flag(win, self.window_on_top)
         try:
             accepted = win.exec() == QDialog.Accepted
@@ -1622,13 +1849,13 @@ class ADOFAIPlayer(QMainWindow):
         if key == current:
             return
         if key == self.macro_hotkey:
-            QMessageBox.warning(parent, "冲突", "输出键不能与触发键相同！")
+            self._warn_conflict(parent, "msg.output_conflict_trigger")
             return
         if key in self.left_keys + self.right_keys:
-            QMessageBox.warning(parent, "冲突", "该按键已存在于按键列表中！")
+            self._warn_conflict(parent, "msg.duplicate_key")
             return
         if key in (self.offset_left_key, self.offset_right_key):
-            QMessageBox.warning(parent, "冲突", "输出键不能与延迟调整键重复！")
+            self._warn_conflict(parent, "msg.output_conflict_offset")
             return
         self._keys_of(key_type)[row] = key
         self._sync_custom_keys()
@@ -1701,7 +1928,7 @@ class ADOFAIPlayer(QMainWindow):
                     suppress=self._should_suppress(self.macro_hotkey)
                 )
         except Exception as e:
-            self.log_message(f"注册触发键失败: {e}", "error")
+            self.log_message(i18n.tr("log.trigger_register_failed", error=e), "error")
 
     def _register_escape_hook(self):
         if self._escape_hook is not None:
@@ -1717,7 +1944,7 @@ class ADOFAIPlayer(QMainWindow):
                 suppress=self._should_suppress("esc")
             )
         except Exception as e:
-            self.log_message(f"注册 ESC 结束键失败: {e}", "error")
+            self.log_message(i18n.tr("log.esc_register_failed", error=e), "error")
 
     def _unregister_escape_hook(self):
         if self._escape_hook is not None:
@@ -1751,7 +1978,7 @@ class ADOFAIPlayer(QMainWindow):
             or self._should_suppress(self.offset_right_key)
         )
         if not self._direction_hook.install():
-            self.log_message("注册延迟调整键钩子失败", "error")
+            self.log_message(i18n.tr("log.direction_hook_failed"), "error")
 
     def _on_realtime_offset_toggled(self, checked):
         self.realtime_offset_enabled = bool(checked)
@@ -1821,7 +2048,9 @@ class ADOFAIPlayer(QMainWindow):
         self._update_offset_display(offset)
 
     def select_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "选择谱面文件", "", "ADOFAI文件 (*.adofai)")
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, i18n.tr("dialog.select_chart"), "", i18n.tr("filter.adofai")
+        )
         if file_path:
             self.load_chart(file_path)
 
@@ -1871,7 +2100,9 @@ class ADOFAIPlayer(QMainWindow):
     def process_file(self):
         try:
             self.parse_logs = []
-            self._parse_logger("MAIN", f"开始处理文件: {self.file_path}")
+            self._parse_logger(
+                "MAIN", i18n.tr("log.processing_start", path=self.file_path)
+            )
             ald = ADOLevelData.new(self.file_path)
             ald.set_logger(self._parse_logger)
             ald.decode()
@@ -1881,13 +2112,19 @@ class ADOFAIPlayer(QMainWindow):
             self.macro_key_info = self.adofai_angle.getMacroKeyInfo()
             self.hold_dict = self.adofai_angle.getHoldDict()
             self.generate_timeline()
-            self.log_message(f"文件解析完成: {len(self.timeline)//2} 个按键事件", "system")
-            self._set_status(f"已加载: {os.path.basename(self.file_path)}", "green")
+            self.log_message(
+                i18n.tr("log.parse_done", count=len(self.timeline) // 2), "system"
+            )
+            self._set_status_key(
+                "status.loaded", "green", name=os.path.basename(self.file_path)
+            )
             self._update_log_count()
-            self._parse_logger("MAIN", f"处理完成，共生成 {len(self.parse_logs)} 条日志")
+            self._parse_logger(
+                "MAIN", i18n.tr("log.parse_logs_done", count=len(self.parse_logs))
+            )
         except Exception as e:
-            self.log_message(f"解析错误: {str(e)}", "error")
-            self._set_status("解析失败", "red")
+            self.log_message(i18n.tr("log.parse_error", error=str(e)), "error")
+            self._set_status_key("status.parse_failed", "red")
             import traceback
             traceback.print_exc()
             self.parse_logs.append(f"[ERROR] {str(e)}")
@@ -1954,7 +2191,7 @@ class ADOFAIPlayer(QMainWindow):
 
     def _main_hand(self):
         if hasattr(self, "main_hand_combo"):
-            return "right" if self.main_hand_combo.currentText() == "右手" else "left"
+            return self._current_main_hand()
         return getattr(self, "technique_main_hand", "right")
 
     def _keys_for_limit(self, limit):
@@ -2001,7 +2238,7 @@ class ADOFAIPlayer(QMainWindow):
             press_times = [k['press_time'] for k in selected_macro_key_info]
             left_keys = self._reverse_key_groups(self.left_keys, 4)
             right_keys = list(self.right_keys)
-            main_hand = "right" if self.main_hand_combo.currentText() == "右手" else "left"
+            main_hand = self._current_main_hand()
             single_kps = self._bpm_value(self.single_kps_edit, 6.5)
             follow_speed = self.technique_follow_speed_check.isChecked() and speed != 1.0
             if follow_speed:
@@ -2079,9 +2316,9 @@ class ADOFAIPlayer(QMainWindow):
             "press_duration": int(self.press_duration_edit.text() or 40),
             "technique": {
                 "enabled": self.technique_check.isChecked(),
-                "style": self.technique_style_combo.currentText(),
+                "style": self._current_technique_style(),
                 "single_kps": self._bpm_value(self.single_kps_edit, 6.5),
-                "main_hand": "right" if self.main_hand_combo.currentText() == "右手" else "left",
+                "main_hand": self._current_main_hand(),
                 "follow_speed": self.technique_follow_speed_check.isChecked(),
             },
             "verbose": self.verbose_check.isChecked(),
@@ -2108,35 +2345,45 @@ class ADOFAIPlayer(QMainWindow):
     def export_config_file(self):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "导出配置文件",
+            i18n.tr("dialog.export_config"),
             "adofai_macro_config.json",
-            "JSON 配置文件 (*.json);;所有文件 (*.*)",
+            i18n.tr("filter.json"),
         )
         if not file_path:
             return
         if config_module.export_config(file_path, self._collect_config()):
-            self.log_message(f"配置已导出: {file_path}", "system")
-            self._set_status(f"配置已导出: {os.path.basename(file_path)}", "green")
+            self.log_message(i18n.tr("log.config_exported", path=file_path), "system")
+            self._set_status_key(
+                "status.config_exported", "green", name=os.path.basename(file_path)
+            )
         else:
-            QMessageBox.critical(self, "导出失败", f"无法写入文件:\n{file_path}")
+            QMessageBox.critical(
+                self, i18n.tr("msg.export_failed"),
+                i18n.tr("msg.export_failed.body", path=file_path),
+            )
 
     def import_config_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "导入配置文件",
+            i18n.tr("dialog.import_config"),
             "",
-            "JSON 配置文件 (*.json);;所有文件 (*.*)",
+            i18n.tr("filter.json"),
         )
         if not file_path:
             return
         data = config_module.import_config(file_path)
         if data is None:
-            QMessageBox.critical(self, "导入失败", f"无法读取配置文件:\n{file_path}")
+            QMessageBox.critical(
+                self, i18n.tr("msg.import_failed"),
+                i18n.tr("msg.import_failed.body", path=file_path),
+            )
             return
         self.stop_play()
         self._apply_config(data)
-        self.log_message(f"配置已导入: {file_path}", "system")
-        self._set_status(f"配置已导入: {os.path.basename(file_path)}", "green")
+        self.log_message(i18n.tr("log.config_imported", path=file_path), "system")
+        self._set_status_key(
+            "status.config_imported", "green", name=os.path.basename(file_path)
+        )
 
     def _apply_config(self, data):
         left = data.get("left_keys")
@@ -2159,7 +2406,10 @@ class ADOFAIPlayer(QMainWindow):
                 self.offset_left_key = offset_left
             else:
                 self.log_message(
-                    f"导入配置: 提前键 '{offset_left}' 存在冲突,保留当前值 '{self.offset_left_key}'",
+                    i18n.tr(
+                        "log.import_offset_left_conflict",
+                        key=offset_left, current=self.offset_left_key,
+                    ),
                     "warning",
                 )
         offset_right = data.get("offset_right_key")
@@ -2170,7 +2420,10 @@ class ADOFAIPlayer(QMainWindow):
                 self.offset_right_key = offset_right
             else:
                 self.log_message(
-                    f"导入配置: 延后键 '{offset_right}' 存在冲突,保留当前值 '{self.offset_right_key}'",
+                    i18n.tr(
+                        "log.import_offset_right_conflict",
+                        key=offset_right, current=self.offset_right_key,
+                    ),
                     "warning",
                 )
         hotkey = data.get("hotkey")
@@ -2179,7 +2432,10 @@ class ADOFAIPlayer(QMainWindow):
                         or hotkey in (self.offset_left_key, self.offset_right_key))
             if conflict:
                 self.log_message(
-                    f"导入配置: 触发键 '{hotkey}' 与其它按键冲突,保留当前触发键 '{self.macro_hotkey}'",
+                    i18n.tr(
+                        "log.import_hotkey_conflict",
+                        key=hotkey, current=self.macro_hotkey,
+                    ),
                     "warning",
                 )
             else:
@@ -2187,7 +2443,7 @@ class ADOFAIPlayer(QMainWindow):
                 self.lbl_hotkey.setText(hotkey)
                 self._register_trigger_key()
         else:
-            self.log_message("导入配置: 未找到有效的 hotkey,保留当前触发键", "warning")
+            self.log_message(i18n.tr("log.import_hotkey_missing"), "warning")
         self.lbl_offset_left.setText(self.offset_left_key)
         self.lbl_offset_right.setText(self.offset_right_key)
         if isinstance(data.get("realtime_offset_enabled"), bool):
@@ -2209,13 +2465,11 @@ class ADOFAIPlayer(QMainWindow):
             self.suppress_bound_keys_check.blockSignals(False)
         self._apply_key_output_options()
         self._refresh_direction_keys()
-        mode = data.get("macro_end_mode", self.macro_end_mode)
-        if mode not in ("trigger", "esc", "both"):
-            mode = "both"
+        mode = self._coerce_macro_end_mode(data.get("macro_end_mode", self.macro_end_mode))
         self.macro_end_mode = mode
         if hasattr(self, "macro_end_combo"):
             self.macro_end_combo.blockSignals(True)
-            self.macro_end_combo.setCurrentText(self._macro_end_mode_to_text(mode))
+            self._set_macro_end_mode(mode)
             self.macro_end_combo.blockSignals(False)
         if self.playback.is_playing:
             self._refresh_escape_hook()
@@ -2231,9 +2485,11 @@ class ADOFAIPlayer(QMainWindow):
             if isinstance(style, str) and style in ("内轮(new)", "内轮(old)"):
                 style = "内轮"
             if isinstance(style, str) and style in STYLE_NAMES:
-                self.technique_style_combo.setCurrentText(style)
+                self._select_combo_data(self.technique_style_combo, style)
             elif isinstance(style, int) and 0 <= style < len(STYLE_NAMES_LEGACY):
-                self.technique_style_combo.setCurrentText(STYLE_NAMES_LEGACY[style])
+                self._select_combo_data(
+                    self.technique_style_combo, STYLE_NAMES_LEGACY[style]
+                )
             try:
                 kps = float(tech.get("single_kps", self.technique_single_kps))
                 if kps > 0:
@@ -2241,7 +2497,9 @@ class ADOFAIPlayer(QMainWindow):
             except (TypeError, ValueError):
                 pass
             hand = tech.get("main_hand", self.technique_main_hand)
-            self.main_hand_combo.setCurrentText("右手" if hand in ("right", "右手") else "左手")
+            self._select_combo_data(
+                self.main_hand_combo, "right" if hand in ("right", "右手") else "left"
+            )
             self.technique_follow_speed_check.setChecked(bool(tech.get("follow_speed", True)))
         
         # 在这里补充一行：当导入配置时，同步更新界面置灰状态
@@ -2346,13 +2604,16 @@ class ADOFAIPlayer(QMainWindow):
             
         self._apply_global_font()
 
+        if data.get("language") is not None:
+            self.set_language(data.get("language"))
+
         self.config.update(self._collect_config())
         if self.file_path:
             self.generate_timeline()
             speed = float(self.speed_edit.text() or 1.0)
             self.playback.preload_timeline(self.timeline, speed)
             self._refresh_hint_windows()
-            self.log_message("时间线已按新配置重新生成", "system")
+            self.log_message(i18n.tr("log.timeline_regenerated"), "system")
 
     def toggle_play(self):
         if self.disable_trigger:
@@ -2364,7 +2625,9 @@ class ADOFAIPlayer(QMainWindow):
 
     def start_play(self):
         if not self.file_path:
-            QMessageBox.warning(self, "警告", "请先选择谱面文件")
+            QMessageBox.warning(
+                self, i18n.tr("dialog.warning"), i18n.tr("msg.select_chart_first")
+            )
             return
         self.playback.reset_offset()
         self._update_offset_display(0)
@@ -2372,7 +2635,7 @@ class ADOFAIPlayer(QMainWindow):
             self.rhythm_hint_window.reset_position()
         if self.falling_notes_window is not None:
             self.falling_notes_window.reset_position()
-        self._set_status("运行中...", "blue")
+        self._set_status_key("status.running", "blue")
         self._register_direction_keys()
         try:
             self.playback.start(
@@ -2380,8 +2643,8 @@ class ADOFAIPlayer(QMainWindow):
                 on_stopped=self.events.playback_finished.emit,
             )
         except Exception as e:
-            self.log_message(f"启动 Macro 失败: {e}", "error")
-            self._set_status("启动失败", "red")
+            self.log_message(i18n.tr("log.start_failed", error=e), "error")
+            self._set_status_key("status.start_failed", "red")
             self._clear_direction_hooks()
             return
         self._refresh_escape_hook()
@@ -2390,7 +2653,7 @@ class ADOFAIPlayer(QMainWindow):
         self._clear_direction_hooks()
         self._unregister_escape_hook()
         self.playback.stop()
-        self._set_status("已停止", "gray")
+        self._set_status_key("status.stopped", "gray")
 
     def _on_playback_finished(self):
         self._toggle_debounce = False
@@ -2398,7 +2661,7 @@ class ADOFAIPlayer(QMainWindow):
             self._debounce_timer.stop()
         if self.falling_notes_window is not None:
             self.falling_notes_window.release_active_holds()
-        self._set_status("就绪", "gray")
+        self._set_status_key("status.ready", "gray")
         self._clear_direction_hooks()
         self._unregister_escape_hook()
 
@@ -2446,9 +2709,9 @@ class ADOFAIPlayer(QMainWindow):
             macro_end_mode=self.macro_end_mode,
             technique={
                 "enabled": self.technique_check.isChecked(),
-                "style": self.technique_style_combo.currentText(),
+                "style": self._current_technique_style(),
                 "single_kps": self._bpm_value(self.single_kps_edit, 6.5),
-                "main_hand": "right" if self.main_hand_combo.currentText() == "右手" else "left",
+                "main_hand": self._current_main_hand(),
                 "follow_speed": self.technique_follow_speed_check.isChecked(),
             },
             verbose=self.verbose_check.isChecked(),
@@ -2470,7 +2733,8 @@ class ADOFAIPlayer(QMainWindow):
             irregular_offset_ms=self.irregular_offset_ms,
             font_name=self.font_name,
             font_size=self.font_size,
+            language=i18n.get_language(),
         )
         if reason and not ok:
-            self.log_message(f"配置保存失败({reason})", "error")
+            self.log_message(i18n.tr("log.config_save_failed", reason=reason), "error")
         return ok

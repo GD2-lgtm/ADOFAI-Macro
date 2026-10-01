@@ -8,6 +8,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ..multipress import annotate_multi_press, track_angle_limit
+from .. import i18n
 
 
 NORMAL_COLOR = QColor("#ff4b3e")
@@ -74,7 +75,10 @@ class _TaikoCanvas(QWidget):
         self.multi_press_enabled = True
         self._angles = None
         self._bpm_points = []
-        self.placeholder = "未加载谱面"
+
+    @property
+    def placeholder(self):
+        return i18n.tr("canvas.placeholder")
 
     def set_notes(self, notes, angles=None, bpm_points=None):
 
@@ -485,7 +489,7 @@ class RhythmHintWindow(QDialog):
     def __init__(self, player, width=None):
         super().__init__(None)
         self.player = player
-        self.setWindowTitle("节奏提示")
+        i18n.title(self, "window.rhythm_hint")
         self.setModal(False)
         self.setMinimumWidth(self.MIN_WIDTH)
         self.setFixedHeight(self.DEFAULT_HEIGHT)

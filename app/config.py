@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+from .i18n import normalize_language, tr
+
 def _config_dir():
     if getattr(sys, "frozen", False) or "compiled" in globals():
         onefile_dir = os.environ.get("NUITKA_ONEFILE_DIRECTORY")
@@ -75,6 +77,7 @@ _DEFAULT_CONFIG = {
     "irregular_offset_ms": 10.0,
     "font_name": "Microsoft YaHei",
     "font_size": 9,
+    "language": "zh",
 }
 
 try:
@@ -123,7 +126,7 @@ def load_config():
                 return json.load(f)
         return copy.deepcopy(DEFAULT_CONFIG)
     except Exception as e:
-        print(f"加载配置失败: {e}")
+        print(tr("log.load_config_failed", error=e))
         return copy.deepcopy(DEFAULT_CONFIG)
 
 def save_config(config, *, left_keys, right_keys, macro_hotkey, press_duration,
@@ -140,7 +143,7 @@ def save_config(config, *, left_keys, right_keys, macro_hotkey, press_duration,
                 rhythm_hint_width=900, falling_notes_width=380,
                 falling_notes_height=820,
                 regular_offset_ms=5.0, irregular_offset_ms=10.0,
-                font_name="Microsoft YaHei", font_size=9):
+                font_name="Microsoft YaHei", font_size=9, language="zh"):
     try:
         config.pop("death_key", None)
         for key in ("rhythm_hint_multi_threshold", "rhythm_hint_multi_press",
@@ -182,12 +185,13 @@ def save_config(config, *, left_keys, right_keys, macro_hotkey, press_duration,
         config["irregular_offset_ms"] = float(irregular_offset_ms)
         config["font_name"] = str(font_name)
         config["font_size"] = int(font_size)
+        config["language"] = normalize_language(language)
         
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             f.write(_dump_config_text(config) + "\n")
         return True
     except Exception as e:
-        print(f"保存配置失败: {e}")
+        print(tr("log.save_config_failed", error=e))
         return False
 
 def export_config(path, config):
@@ -196,7 +200,7 @@ def export_config(path, config):
             f.write(_dump_config_text(config) + "\n")
         return True
     except Exception as e:
-        print(f"导出配置失败: {e}")
+        print(tr("log.export_config_failed", error=e))
         return False
 
 def import_config(path):
@@ -204,9 +208,9 @@ def import_config(path):
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
-            print(f"导入配置失败: 文件内容不是 JSON 对象: {path}")
+            print(tr("log.import_config_not_object", path=path))
             return None
         return data
     except Exception as e:
-        print(f"导入配置失败: {e}")
+        print(tr("log.import_config_failed", error=e))
         return None

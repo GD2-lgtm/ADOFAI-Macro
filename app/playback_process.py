@@ -1,6 +1,7 @@
 import ctypes
 import multiprocessing
 import threading
+from . import i18n
 from .console import PERF_FREQ, get_perf_counter_raw
 from .playback import PlaybackEngine
 
@@ -55,6 +56,13 @@ def _apply_config(engine, timeline, keys, speed, key_output_enabled, verbose):
         except Exception:
             pass
 
+def _set_process_language(code):
+    """The spawned worker keeps its own i18n state, so mirror it over."""
+    try:
+        i18n.set_language(code)
+    except Exception:
+        pass
+
 def _playback_process_main(control, status, timeline=None, keys=None,
                            speed=1.0, verbose=False,
                            key_output_enabled=True):
@@ -88,7 +96,12 @@ def _playback_process_main(control, status, timeline=None, keys=None,
                     message[4] if len(message) > 4 else True,
                     message[5] if len(message) > 5 else False,
                 )
+                if len(message) > 6:
+                    _set_process_language(message[6])
                 _send_status(status, ("configured",))
+            elif kind == "language":
+                if len(message) > 1:
+                    _set_process_language(message[1])
             elif kind == "start":
                 if len(message) > 1:
                     engine.verbose = bool(message[1])
@@ -97,6 +110,8 @@ def _playback_process_main(control, status, timeline=None, keys=None,
                     )
                 if len(message) > 2:
                     engine.key_output_enabled = bool(message[2])
+                if len(message) > 3:
+                    _set_process_language(message[3])
                 engine.is_playing = True
                 engine._run_loop(
                     control=control,
@@ -162,6 +177,7 @@ class RemotePlaybackEngine:
         self._worker_lock = threading.RLock()
         self._configured = False
         self._ctx = multiprocessing.get_context("spawn")
+        self.language = i18n.get_language()
 
     @property
     def key_output_enabled(self):
@@ -190,7 +206,7 @@ class RemotePlaybackEngine:
             if not self.is_playing:
                 self._send_configure()
         except Exception as e:
-            self.log_message(f"预热 Macro 子进程失败: {e}", "error")
+            self.log_message(i18n.tr("log.preload_failed", error=e), "error")
 
     def chart_position_ms(self):
         if not self.is_playing or self._start_counter is None:
@@ -216,7 +232,9 @@ class RemotePlaybackEngine:
         if not self._configured:
             self._send_configure()
         self.is_playing = True
-        self._send_control(("start", self.verbose, self._key_output_enabled))
+        self._send_control(
+            ("start", self.verbose, self._key_output_enabled, self.language)
+        )
 
     def stop(self):
         was_playing = self.is_playing
@@ -376,6 +394,7 @@ class RemotePlaybackEngine:
             self.speed,
             self._key_output_enabled,
             self.verbose,
+            self.language,
         ))
         self._configured = True
 

@@ -1,6 +1,7 @@
 import threading
 import time
 import keyboard
+from . import i18n
 from .console import PERF_FREQ, get_perf_counter_raw
 from .keys import KeyInjector, resolve_key_codes
 
@@ -165,7 +166,7 @@ class PlaybackEngine:
     def _run_loop(self, on_stopped=None, control=None, status=None, verbose=None):
         if verbose is not None:
             self.verbose = verbose
-        self.log_message("=== Macro 开始 ===", "system")
+        self.log_message(i18n.tr("log.playback_start"), "system")
         try:
             self.release_all_keys()
             speed = self.speed if self.speed else 1.0
@@ -229,8 +230,10 @@ class PlaybackEngine:
                             else:
                                 keyboard.release(self._key_to_codes(key)[0])
                         except Exception as e:
-                            self.log_message(f"按键失败 [{key}]: {e}", "error")
-                    self.log_message("SendInput 注入失败,已回退", "error")
+                            self.log_message(
+                                i18n.tr("log.key_failed", key=key, error=e), "error"
+                            )
+                    self.log_message(i18n.tr("log.sendinput_fallback"), "error")
                 if self.verbose:
                     for key, action in actions:
                         t_ms = (base - start_counter) * ms_per_counter + self.offset_ms
@@ -238,9 +241,9 @@ class PlaybackEngine:
                             self.log_message(f"[{t_ms:.1f}ms] Press {key}", "key")
                         else:
                             self.log_message(f"[{t_ms:.1f}ms] Release {key}", "delay")
-            self.log_message("=== Macro 结束 ===", "system")
+            self.log_message(i18n.tr("log.playback_end"), "system")
         except Exception as e:
-            self.log_message(f"错误: {e}", "error")
+            self.log_message(i18n.tr("log.playback_error", error=e), "error")
             import traceback
             traceback.print_exc()
         finally:
